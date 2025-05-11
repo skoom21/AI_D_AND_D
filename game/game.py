@@ -31,79 +31,176 @@ class Game:
         if self.npcs:
             logger.info(f"NPCs list initialized in Game. Count: {len(self.npcs)}.")
         else:
-            logger.info("No NPCs initialized in Game.") # Should be warning or handled
+            logger.info("No NPCs initialized in Game.")
 
         self.current_quest = None
         self.narrative = ["You find yourself in a forest clearing."]
-        self.current_npc = None # Initialize current_npc to None
-        self.ai_dm = None # Initialize ai_dm to None
-
+        
         if not self.npcs:
             self.narrative.append("The world feels strangely empty. No challenges await.")
             self.game_state = GameState.VICTORY
             logger.info("No NPCs found at game start. Setting state to VICTORY.")
         else:
-            # NPCs exist, set up AI and initial quest
-            # Initialize AI-DM first, as it will guide the initial NPC and quest
-            self.ai_dm = AIDM(self)
-            logger.info("AI-DM initialized in Game.")
+            # Start with an enemy NPC for immediate engagement
+            enemy_npcs = [npc for npc in self.npcs if npc.npc_type == "enemy"]
+            self.current_npc = enemy_npcs[0] if enemy_npcs else self.npcs[0]
+            self.narrative.append(f"A {self.current_npc.name} stands before you, eyeing you warily.")
+            logger.info(f"Initial current_npc set to: {self.current_npc.name}")
 
-            # Let AIDM determine the initial quest.
-            # update_quest() will set self.current_npc to the quest's target NPC
-            # and append the quest description to self.narrative.
-            if self.game_state == GameState.PLAYING: # Should be true here
-                self.ai_dm.update_quest()
-                
-                # Log the NPC that AIDM selected for the first quest
-                if self.current_npc:
-                    logger.info(f"Initial game focus: current_npc set to '{self.current_npc.name}' by AIDM for the first quest.")
-                else:
-                    # This case means AIDM's update_quest didn't set a current_npc
-                    logger.warning("AIDM's initial update_quest did not result in a current_npc being set.")
-                    # Fallback narrative if AIDM didn't provide a quest/NPC focus
-                    if len(self.narrative) == 1 and self.narrative[0] == "You find yourself in a forest clearing.":
-                        self.narrative.append("The path ahead is unclear. Explore your surroundings.")
-            # If game_state was not PLAYING (e.g. somehow set to VICTORY already), no quest update.
-            
+        # Initialize AI-DM
+        self.ai_dm = AIDM(self)
+        logger.info("AI-DM initialized in Game.")
+        
+        if self.game_state == GameState.PLAYING and self.current_npc:
+            self.ai_dm.update_quest()  # This will log its own details
+        logger.info("Game object initialized successfully.")
+        
         # Track turns for quest difficulty adjustment
         self.turn_counter = 0
         
         # Track player's inventory and gold
         self.inventory = []
-        self.gold = 10  # Start with a small amount of gold
+        self.gold = 10
+
+        # New attributes for dialogue management
+        self.active_dialogue_npc = None  # Stores the NPC currently in dialogue
+        self.awaiting_typewriter_completion = False  # True if a line is currently being typed out
+        self.dialogue_requires_player_advance = False  # True if waiting for player to press Enter for next line
+        self.play_sound_event = None  # For triggering sounds from main.py: "dialogue_start", "dialogue_advance", "dialogue_end"
+
+    def _start_dialogue_with_npc(self, npc, dialogue_lines):
+        """Initiates a dialogue sequence with an NPC."""
+        if not dialogue_lines:
+            self.narrative = [f"The {npc.name} has nothing to say."]
+            self.play_sound_event = "dialogue_end"  # Or a neutral sound
+            return
+
+        logger.info(f"Starting dialogue with {npc.name}. Lines: {dialogue_lines}")
+        self.active_dialogue_npc = npc
+        npc.pending_dialogue_lines = dialogue_lines
+        npc.current_dialogue_index = 0
+        self.dialogue_requires_player_advance = False  # First line starts automatically via typewriter
+        self.play_sound_event = "dialogue_start"
+        self._advance_dialogue()
+
+    def _advance_dialogue(self):
+        """Advances to the next line of dialogue for the active_dialogue_npc."""
+        if not self.active_dialogue_npc or not self.active_dialogue_npc.pending_dialogue_lines:
+            self._end_dialogue()
+            return
+
+        npc = self.active_dialogue_npc
+        if npc.current_dialogue_index < len(npc.pending_dialogue_lines):
+            line = npc.pending_dialogue_lines[npc.current_dialogue_index]
+            
+            if npc.current_dialogue_index == 0:  # First line of this interaction
+                prefix = f"{npc.name} says:"
+                current_disposition = npc.get_dialogue_disposition()
+                if npc.npc_type == 'enemy' or current_disposition == 'hostile':
+                    prefix = f"{npc.name} growls:"
+                elif npc.npc_type == 'merchant':
+                    prefix = f"{npc.name} offers:"
+                elif npc.npc_type == 'quest_giver':
+                    prefix = f"{npc.name} proclaims:"
+                # Add quotes around the dialogue line itself
+                self.narrative = [f"{prefix} \"{line}\""]
+            else:  # Subsequent lines
+                self.narrative = [f"\"{line}\""]  # Just the line, quoted
+
+            logger.debug(f"Advancing dialogue with {npc.name}, line {npc.current_dialogue_index}: {self.narrative[0]}")
+            self.awaiting_typewriter_completion = True  # Signal main.py to use typewriter
+            self.dialogue_requires_player_advance = False 
+            npc.current_dialogue_index += 1
+        else:
+            self._end_dialogue()
+
+    def _end_dialogue(self):
+        """Ends the current dialogue sequence."""
+        npc_that_was_in_dialogue = self.active_dialogue_npc
+        
+        if self.active_dialogue_npc:
+            logger.info(f"Dialogue with {self.active_dialogue_npc.name} ended.")
+            self.active_dialogue_npc.pending_dialogue_lines = []
+            self.active_dialogue_npc.current_dialogue_index = 0
+        
+        self.active_dialogue_npc = None
+        self.awaiting_typewriter_completion = False
+        self.dialogue_requires_player_advance = False
+        self.play_sound_event = "dialogue_end"
+        
+        # Check for quest completion after dialogue ends
+        if npc_that_was_in_dialogue and self.current_quest:
+            if self.current_quest.get('target_npc') == npc_that_was_in_dialogue.name:
+                quest_type = self.current_quest.get('type')
+                if quest_type == QuestType.TALK:
+                    logger.info(f"TALK quest with {npc_that_was_in_dialogue.name} completed after dialogue.")
+                    self.ai_dm.complete_quest() 
+                elif quest_type == QuestType.FIND and npc_that_was_in_dialogue.npc_type != "enemy":
+                    logger.info(f"FIND quest involving {npc_that_was_in_dialogue.name} completed after dialogue.")
+                    self.ai_dm.complete_quest()
+        
+        if not self.last_action_led_to_quest_complete:
+            self.narrative = [f"You finish speaking with {npc_that_was_in_dialogue.name if npc_that_was_in_dialogue else 'them'}."]
+
+    def on_typewriter_line_completed(self):
+        """Called by main.py when typewriter effect finishes for a dialogue line."""
+        logger.debug("Typewriter line completed.")  # Existing debug log
+        self.awaiting_typewriter_completion = False
+        if self.active_dialogue_npc:
+            idx = self.active_dialogue_npc.current_dialogue_index
+            line_count = len(self.active_dialogue_npc.pending_dialogue_lines)
+            # Added INFO log
+            logger.info(f"on_typewriter_line_completed: NPC: {self.active_dialogue_npc.name}, current_idx: {idx}, line_count: {line_count}, dialogue_requires_player_advance_before_set: {self.dialogue_requires_player_advance}")
+
+            if idx < line_count:
+                self.dialogue_requires_player_advance = True
+                # Added INFO log
+                logger.info(f"on_typewriter_line_completed: Set dialogue_requires_player_advance = True for {self.active_dialogue_npc.name}")
+            else:
+                # Added INFO log
+                logger.info(f"on_typewriter_line_completed: All lines done for {self.active_dialogue_npc.name}. Ending dialogue.")
+                self._end_dialogue()
+        else:
+            logger.warning("on_typewriter_line_completed called without active_dialogue_npc")
 
     def get_display_text(self):
-        logger.debug(f"Getting display text for game state: {self.game_state.name}")
-        if self.game_state == GameState.PLAYING:
-            # Enhanced options based on current NPC type
+        logger.debug(f"Getting display text. Game state: {self.game_state.name}. Active dialogue NPC: {self.active_dialogue_npc.name if self.active_dialogue_npc else 'None'}")
+        
+        options = []
+        current_narrative = self.narrative 
+
+        if self.active_dialogue_npc and (self.dialogue_requires_player_advance or self.awaiting_typewriter_completion):
+            options = [] 
+        elif self.game_state == GameState.PLAYING:
             options = ["Move", "Attack", "Interact"]
             
-            # Add special options based on NPC type
             if self.current_npc and self.current_npc.npc_type == "merchant":
                 options = ["Move", "Talk", "Trade"]
             elif self.current_npc and self.current_npc.npc_type == "quest_giver":
                 options = ["Move", "Talk", "Accept Quest"]
             
-            return self.narrative, options
+            return current_narrative, options
         elif self.game_state == GameState.GAME_OVER:
-            return self.narrative + ["Game Over. Press Q to quit."], []
+            return current_narrative + ["Game Over. Press Q to quit."], []
         elif self.game_state == GameState.VICTORY:
-            return self.narrative + ["You are victorious! Press Q to quit."], []
-        return self.narrative, []
+            return current_narrative + ["You are victorious! Press Q to quit."], []
+        return current_narrative, []
 
     def handle_input(self, choice):
-        logger.info(f"Handling player input: {choice} in state: {self.game_state.name}")
         if self.game_state != GameState.PLAYING:
-            logger.warning(f"Input {choice} ignored, game state is {self.game_state.name}")
+            return
+
+        if self.active_dialogue_npc:
+            logger.info(f"Numbered input {choice} ignored during active dialogue with {self.active_dialogue_npc.name}.")
             return
 
         if choice == 1:  # Move
             self.player_move()
         elif choice == 2:  # Attack/Talk
             if self.current_npc and self.current_npc.npc_type in ["merchant", "quest_giver"]:
-                self.player_talk()  # Talk for non-combat NPCs
+                self.player_talk()
             else:
-                self.player_attack()  # Attack for enemies
+                self.player_attack()
         elif choice == 3:  # Interact/Trade/Accept Quest
             if self.current_npc and self.current_npc.npc_type == "merchant":
                 self.player_trade()
@@ -112,11 +209,26 @@ class Game:
             else:
                 self.player_interact()
         else:
-            self.narrative.append("Invalid choice. Try again.")
+            self.narrative = ["Invalid choice. Try again."]
             logger.warning(f"Invalid input choice by player: {choice}")
         
         if self.game_state == GameState.PLAYING:
             self.update()
+
+    def player_advance_dialogue_key(self):
+        """Called when player presses key to advance dialogue (e.g. Enter)."""
+        # Added INFO log to see if this function is entered
+        logger.info(f"player_advance_dialogue_key: Attempting to advance. ActiveNPC: {bool(self.active_dialogue_npc)}, RequiresAdvance: {self.dialogue_requires_player_advance}, AwaitingTypewriter: {self.awaiting_typewriter_completion}")
+
+        if self.active_dialogue_npc and self.dialogue_requires_player_advance and not self.awaiting_typewriter_completion:
+            logger.info(f"Player advancing dialogue with {self.active_dialogue_npc.name}.")  # Changed from debug to info
+            self.play_sound_event = "dialogue_advance"
+            self._advance_dialogue()
+        elif self.active_dialogue_npc and self.awaiting_typewriter_completion:
+            logger.info("Player attempt to advance dialogue while typewriter is active (event should be handled by typewriter skip mechanism).")  # Changed from debug/warning to info
+        else:
+            # Added INFO log for this specific condition
+            logger.info(f"player_advance_dialogue_key: Conditions not met to advance. ActiveNPC: {bool(self.active_dialogue_npc)}, RequiresAdvance: {self.dialogue_requires_player_advance}, AwaitingTypewriter: {self.awaiting_typewriter_completion}")
 
     def player_move(self):
         logger.info("Player chose to move.")
@@ -125,14 +237,12 @@ class Game:
             logger.info("Player moves, but no current NPC.")
             return
 
-        # Select a different random NPC to encounter
         other_npcs = [npc for npc in self.npcs if npc.health > 0 and npc != self.current_npc]
         
         if other_npcs:
             self.current_npc = random.choice(other_npcs)
             self.narrative = [f"You move to another area and encounter a {self.current_npc.name}."]
             
-            # Add description based on NPC type
             if self.current_npc.npc_type == "merchant":
                 self.narrative.append("They appear to be selling various goods and potions.")
             elif self.current_npc.npc_type == "quest_giver":
@@ -155,18 +265,14 @@ class Game:
         if self.current_npc.health > 0:
             logger.info(f"Player attacking {self.current_npc.name} (Health: {self.current_npc.health}).")
             
-            # Use dice roll for attack - d20 roll + strength modifier
             attack_roll = self.player.attack_roll()
             self.narrative = [f"You roll a {attack_roll} for your attack!"]
             
-            # Determine hit success and damage
-            if attack_roll >= 10:  # Simple hit threshold
-                # Calculate damage using dice (1d6 + strength modifier)
-                strength_modifier = self.player.strength // 2 - 5  # Similar to D&D modifier
+            if attack_roll >= 10:
+                strength_modifier = self.player.strength // 2 - 5
                 damage_roll = roll_dice(6, 1, strength_modifier)
-                damage_dealt = max(1, damage_roll)  # Minimum 1 damage
+                damage_dealt = max(1, damage_roll)
                 
-                # Apply damage, which might be reduced if NPC is defending
                 actual_damage = self.current_npc.take_damage(damage_dealt, self.player.strength)
                 damage_msg = "reduced " if self.current_npc.is_defending else ""
                 
@@ -179,31 +285,24 @@ class Game:
                 self.narrative.append(f"You defeated the {self.current_npc.name}!")
                 logger.info(f"NPC {self.current_npc.name} defeated by player.")
                 
-                # Check if this NPC was part of current quest
                 if self.current_quest and self.current_quest.get('target_npc') == self.current_npc.name:
                     if self.current_quest.get('type') == QuestType.DEFEAT:
                         self.ai_dm.complete_quest()
             else:
-                # NPC is still alive, use AI to determine its action
                 logger.info(f"NPC {self.current_npc.name} (Health: {self.current_npc.health}) deciding action...")
                 
-                # Get best action using Minimax
                 action, action_description = self.ai_dm.determine_npc_action(self.current_npc)
                 
-                # Add action description to narrative
                 self.narrative.append(action_description)
                 
-                # Apply effects based on NPC action
                 if action == NPCAction.ATTACK:
-                    # Roll for NPC attack
                     npc_attack_roll = roll_dice(20, 1, self.current_npc.strength // 2 - 5)
                     self.narrative.append(f"The {self.current_npc.name} rolls a {npc_attack_roll} for their attack!")
                     
-                    if npc_attack_roll >= 10:  # Simple hit threshold
-                        # Calculate damage (1d4 + strength modifier)
+                    if npc_attack_roll >= 10:
                         npc_strength_mod = self.current_npc.strength // 2 - 5
                         damage_roll = roll_dice(4, 1, npc_strength_mod)
-                        damage = max(1, damage_roll)  # Minimum 1 damage
+                        damage = max(1, damage_roll)
                         
                         actual_damage = self.player.take_damage(damage, self.current_npc.strength)
                         self.narrative.append(f"Hit! The {self.current_npc.name} strikes you for {actual_damage} damage!")
@@ -213,14 +312,13 @@ class Game:
                         
                 elif action == NPCAction.DEFEND:
                     self.narrative.append(f"The {self.current_npc.name} is now defending, reducing incoming damage.")
-                    # The defense effect is handled in the NPC's take_damage method
                 elif action == NPCAction.FLEE:
-                    flee_roll = roll_dice(20, 1, 0)  # d20 roll for flee attempt
-                    flee_success = flee_roll > 15  # 25% chance of successful flee
+                    flee_roll = roll_dice(20, 1, 0)
+                    flee_success = flee_roll > 15
                     
                     if flee_success:
                         self.narrative.append(f"The {self.current_npc.name} successfully flees from battle!")
-                        self.current_npc.health = 0  # Remove NPC from battle
+                        self.current_npc.health = 0
                         logger.info(f"NPC {self.current_npc.name} successfully fled from battle")
                     else:
                         self.narrative.append(f"The {self.current_npc.name} tries to flee but fails! (Rolled {flee_roll}, needed >15)")
@@ -234,55 +332,38 @@ class Game:
             logger.info(f"Player attempts to attack already defeated NPC: {self.current_npc.name}")
 
     def player_talk(self):
-        """Talk to NPCs specifically for dialogue-based interactions."""
-        logger.info(f"Player chose to talk with {self.current_npc.name} ({self.current_npc.npc_type}).")
-        
+        logger.info(f"Player chose to talk with {self.current_npc.name if self.current_npc else 'no one'}.")
         if not self.current_npc:
             self.narrative = ["There is no one to talk to."]
             return
-            
         if self.current_npc.health <= 0:
             self.narrative = [f"The {self.current_npc.name} is no longer able to speak."]
             return
-            
-        # Generate dialogue using NLP-enhanced AIDM
-        dialogue = self.ai_dm.generate_dialogue(self.current_npc)
-        self.narrative = [dialogue]
-        
-        # Check if this satisfies a TALK quest
-        if (self.current_quest and 
-            self.current_quest.get('type') == QuestType.TALK and 
-            self.current_quest.get('target_npc') == self.current_npc.name):
-            # Complete the "talk to" quest
-            self.ai_dm.complete_quest()
-            logger.info(f"Completed TALK quest with {self.current_npc.name}")
+
+        if self.active_dialogue_npc == self.current_npc and self.dialogue_requires_player_advance:
+            self.player_advance_dialogue_key()
+            return
+
+        dialogue_lines = self.ai_dm.generate_dialogue(self.current_npc)
+        self._start_dialogue_with_npc(self.current_npc, dialogue_lines)
 
     def player_interact(self):
-        logger.info("Player chose to interact.")
+        logger.info(f"Player chose to interact with {self.current_npc.name if self.current_npc else 'no one'}.")
         if not self.current_npc:
             self.narrative = ["There is no one to interact with."]
             logger.warning("Player interaction attempt, but no current NPC.")
             return
 
-        if self.current_npc.health > 0:
-            # Generate dialogue based on the NPC's state
-            logger.info(f"Player interacting with {self.current_npc.name}.")
-            dialogue = self.ai_dm.generate_dialogue(self.current_npc)
-            self.narrative = [dialogue]
-            
-            # Check if this satisfies a FIND quest (representing the player finding something)
-            if (self.current_quest and 
-                self.current_quest.get('type') == QuestType.FIND and 
-                self.current_quest.get('target_npc') == self.current_npc.name):
-                # Complete the "find" quest
-                self.ai_dm.complete_quest()
-                logger.info(f"Completed FIND quest with {self.current_npc.name}")
-        else:
+        if self.current_npc.health <= 0:
             self.narrative = [f"The {self.current_npc.name} is defeated and cannot speak."]
             logger.info(f"Player attempts to interact with defeated NPC: {self.current_npc.name}")
+            return
+            
+        logger.info(f"Player interacting with {self.current_npc.name}.")
+        dialogue_lines = self.ai_dm.generate_dialogue(self.current_npc) 
+        self._start_dialogue_with_npc(self.current_npc, dialogue_lines)
 
     def player_trade(self):
-        """Trade with merchant NPCs."""
         logger.info(f"Player chose to trade with {self.current_npc.name}.")
         
         if not self.current_npc or self.current_npc.npc_type != "merchant":
@@ -293,7 +374,6 @@ class Game:
             self.narrative = [f"The {self.current_npc.name} is no longer able to trade."]
             return
             
-        # Simple healing trade for demonstration
         self.narrative = [f"The {self.current_npc.name} offers you a healing potion."]
         heal_amount = 20
         self.player.heal(heal_amount)
@@ -303,7 +383,6 @@ class Game:
         logger.info(f"Player traded with merchant and healed for {heal_amount} points")
 
     def player_accept_quest(self):
-        """Accept a quest from a quest giver NPC."""
         logger.info(f"Player chose to accept quest from {self.current_npc.name}.")
         
         if not self.current_npc or self.current_npc.npc_type != "quest_giver":
@@ -314,17 +393,15 @@ class Game:
             self.narrative = [f"The {self.current_npc.name} is no longer able to give quests."]
             return
             
-        # Force update of quest targeting this NPC
         old_quest = self.current_quest
         self.current_quest = None
-        self.ai_dm.update_quest()  # This method in AIDM should set the flag if a quest is made
+        self.ai_dm.update_quest()
         
         if self.current_quest:
             self.narrative = [f"You accept a new quest from {self.current_npc.name}:"]
             self.narrative.append(self.current_quest.get('description'))
             logger.info(f"Player accepted new quest: {self.current_quest.get('description')}")
         else:
-            # If no new quest could be generated, restore the old one
             self.current_quest = old_quest
             self.narrative = [f"The {self.current_npc.name} has no new quests for you at this time."]
             logger.info("No new quest could be generated for player")
@@ -335,10 +412,8 @@ class Game:
             logger.debug(f"Game update skipped, game state is {self.game_state.name}")
             return
 
-        # Increment turn counter
         self.turn_counter += 1
         
-        # Check for player defeat
         if self.player.health <= 0:
             self.game_state = GameState.GAME_OVER
             self.narrative = ["Game Over. You have been defeated."]
@@ -346,7 +421,6 @@ class Game:
             logger.info("Player health <= 0. Game state changed to GAME_OVER.")
             return
 
-        # Check for victory condition
         all_npcs_defeated = all(npc.health <= 0 for npc in self.npcs)
         if not self.current_quest and all_npcs_defeated and self.npcs:
             self.game_state = GameState.VICTORY
@@ -354,12 +428,10 @@ class Game:
             logger.info("All NPCs defeated and no current quest. Game state changed to VICTORY.")
             return
 
-        # Every 3 turns, consider adjusting quest difficulty
         if self.turn_counter % 3 == 0:
             logger.info(f"Turn {self.turn_counter}: Evaluating quest difficulty")
             self.ai_dm.adjust_quest_difficulty()
 
-        # If current NPC is defeated, find a new one
         if self.current_npc and self.current_npc.health <= 0:
             living_npcs = [npc for npc in self.npcs if npc.health > 0]
             if living_npcs:
@@ -370,7 +442,6 @@ class Game:
                 self.current_npc = None
                 logger.info("All NPCs defeated, no current NPC available")
 
-        # Update quest if needed
         if not self.current_quest and any(npc.health > 0 for npc in self.npcs):
             logger.info("No current quest and living NPCs exist. AI-DM updating quest.")
             self.ai_dm.update_quest()

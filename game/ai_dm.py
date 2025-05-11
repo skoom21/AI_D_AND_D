@@ -139,26 +139,28 @@ class AIDM:
         return random.choice(living_npcs)
 
     def generate_dialogue(self, npc):
-        """Generate NPC dialogue based on NPC type, disposition and game context."""
+        """Generate NPC dialogue based on NPC type, disposition and game context.
+        Returns a list of dialogue lines."""
         if not npc:
-            return "There is no one here to speak with."
+            return ["There is no one here to speak with."] # Return as list
             
         # Determine NPC's current disposition 
         disposition = npc.get_dialogue_disposition()
         
         # Prepare context for more specific dialogue generation
         context = {
-            'health_percent': npc.health / npc.max_health,
+            'health_percent': npc.health / npc.max_health if npc.max_health > 0 else 0,
             'quest_relevant': self.game.current_quest and 
                              self.game.current_quest.get('target_npc') == npc.name,
-            'player_health': self.game.player.health / self.game.player.max_health
+            'player_health': self.game.player.health / self.game.player.max_health if self.game.player.max_health > 0 else 0,
+            'npc_type': npc.npc_type # Pass npc_type to nlp_generator context
         }
         
         # Generate dialogue using NLP
-        dialogue = self.nlp_generator.generate_npc_dialogue(npc.name, disposition, context)
+        dialogue_lines = self.nlp_generator.generate_npc_dialogue(npc.name, disposition, context)
         
-        logger.info(f"AIDM generated dialogue for NPC {npc.name}: '{dialogue}'")
-        return dialogue
+        logger.info(f"AIDM generated dialogue lines for NPC {npc.name}: {dialogue_lines}")
+        return dialogue_lines # Return the list of lines
 
     def complete_quest(self):
         """Handle quest completion based on quest type."""

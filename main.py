@@ -225,6 +225,9 @@ def update_fonts():
 # Initialize fonts
 update_fonts()
 
+# Global flags for typewriter state, primarily for coordinating with main loop
+typewriter_is_busy = False  # True if typewriter_effect is currently running for a line
+
 # Function to scale UI elements when screen size changes
 def update_ui_layout():
     global NARRATIVE_RECT, OPTIONS_RECT, STATS_RECT, CHAR_INFO_RECT
@@ -367,12 +370,15 @@ def render_text_wrapped(surface, text, font, color, rect, aa=True, bkg=None):
         
     return y
 
-def typewriter_effect(surface, text, font, color, rect, speed=15):
-    """Displays text with a typewriter effect. Clears the rect area first."""
-    # First draw the panel background
-    draw_panel(surface, rect, border_radius=10)
-    
-    # Adjust rect for padding
+def typewriter_effect(surface, text, font, color, rect, speed=15, game_instance=None):
+    """Displays text with a typewriter effect. Clears the rect area first.
+    Calls game_instance.on_typewriter_line_completed() if game_instance is provided.
+    Returns True if animation completed/skipped, False if interrupted by QUIT.
+    """
+    global typewriter_is_busy
+    typewriter_is_busy = True
+
+    draw_panel(surface, rect, border_radius=10)  # Initial panel draw
     padding = int(min(rect.width, rect.height) * 0.05)
     inner_rect = pygame.Rect(
         rect.left + padding,
@@ -382,97 +388,105 @@ def typewriter_effect(surface, text, font, color, rect, speed=15):
     )
 
     words = text.split(' ')
-    lines_to_render = []  # This will hold the strings for each line
+    lines_to_render = []
     current_line_words = []
     line_spacing = font.get_linesize()
 
-    # Calculate lines based on inner_rect width
     for word in words:
         temp_line_words = current_line_words + [word]
         line_width, _ = font.size(' '.join(temp_line_words))
-        if line_width > inner_rect.width and current_line_words:  # if adding word exceeds width and there are words in current_line
+        if line_width > inner_rect.width and current_line_words:
             lines_to_render.append(' '.join(current_line_words))
             current_line_words = [word]
         else:
             current_line_words.append(word)
-    if current_line_words:  # Add any remaining words
+    if current_line_words:
         lines_to_render.append(' '.join(current_line_words))
-
-    rendered_lines_surfaces = []  # Store surfaces of fully typed lines
-    current_y = inner_rect.top
     
-    # Allow skipping the typing animation
-    skip_animation = False
+    if not lines_to_render and text.strip():  # Handle case where text is very short but not empty
+        lines_to_render.append(text.strip())
 
-    for line_idx, line_text in enumerate(lines_to_render):
-        if current_y + line_spacing > inner_rect.bottom:  # Check if there's space for the new line
-            break
+    rendered_lines_surfaces = []
+    current_y = inner_rect.top
+    skip_animation = False
+    animation_fully_completed = True  # Assume completion unless quit
+
+    for line_idx, line_text_to_type in enumerate(lines_to_render):
+        if current_y + line_spacing > inner_rect.bottom:
+            # Show ellipsis if text is cut off (only if there are more lines than fit)
+            if line_idx < len(lines_to_render) - 1:
+                ellipsis_surf = font.render("...", True, color)
+                surface.blit(ellipsis_surf, (inner_rect.right - ellipsis_surf.get_width() - 5, inner_rect.bottom - line_spacing))
+            break  # Stop if no more space
 
         typed_chars_for_current_line = ""
-        for char_idx, char_to_type in enumerate(line_text):
+        for char_idx, char_to_type in enumerate(line_text_to_type):
             if skip_animation:
-                # If animation is skipped, jump to the fully typed text
-                break
+                typed_chars_for_current_line = line_text_to_type  # Complete the current line text
+                break 
                 
             typed_chars_for_current_line += char_to_type
-            play_sound("typewriter_char", volume=0.5)
+            if char_idx % 3 == 0:  # Reduce sound frequency
+                play_sound("typewriter_char", volume=0.2 * master_volume * sfx_volume)
 
-            # Redraw the panel for each frame
+            # Redraw the panel for each frame to clear previous cursor/text state
             draw_panel(surface, rect, border_radius=10)
 
-            # Blit previously completed lines
             temp_blit_y = inner_rect.top
-            for prev_line_surf in rendered_lines_surfaces:
+            for prev_line_surf in rendered_lines_surfaces:  # Blit fully completed lines
                 surface.blit(prev_line_surf, (inner_rect.left, temp_blit_y))
                 temp_blit_y += line_spacing
-
-            # Render and blit the current line being typed (at its correct y position)
+            
             current_line_surf = font.render(typed_chars_for_current_line, True, color)
-            surface.blit(current_line_surf, (inner_rect.left, current_y))
+            surface.blit(current_line_surf, (inner_rect.left, current_y))  # Blit current typing line
 
-            # Add a blinking cursor at the end of the current line
-            if (pygame.time.get_ticks() // 500) % 2 == 0:  # Blink every 500ms
+            if (pygame.time.get_ticks() // 500) % 2 == 0:  # Blinking cursor
                 cursor_pos = (inner_rect.left + current_line_surf.get_width() + 2, current_y)
                 cursor_height = font.get_height()
                 pygame.draw.line(surface, color, cursor_pos, 
                                 (cursor_pos[0], cursor_pos[1] + cursor_height - 2), 2)
-
-            pygame.display.update(rect)  # Update only the text rect for efficiency
+            
+            pygame.display.update(rect)  # Update only the text rect
             pygame.time.wait(speed)
 
-            # Event handling during typing to prevent freeze
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
+            for event_tw in pygame.event.get():  # Minimal event handling during typing
+                if event_tw.type == pygame.QUIT:
                     logger.warning("Quit event during typewriter effect.")
-                    pygame.quit()
+                    animation_fully_completed = False
+                    pygame.quit()  # Ensure pygame quits properly
                     import sys
                     sys.exit()
-                # Skip animation on SPACE or RETURN
-                elif event.type == pygame.KEYDOWN and event.key in (pygame.K_SPACE, pygame.K_RETURN):
-                    skip_animation = True
-                    break
-
-        # If animation was skipped, render the full line immediately
-        if skip_animation:
-            typed_chars_for_current_line = line_text
+                elif event_tw.type == pygame.KEYDOWN:
+                    if event_tw.key == pygame.K_SPACE or event_tw.key == pygame.K_RETURN:
+                        logger.info("Typewriter skipped by player.")
+                        skip_animation = True
+                        play_sound("menu_select", volume=sfx_volume * master_volume) 
+                        break  # Break from char loop
+            if not animation_fully_completed: break  # If quit, break from char loop
         
-        # Current line is fully typed, store its fully rendered surface
-        completed_line_surf = font.render(line_text, True, color)
-        rendered_lines_surfaces.append(completed_line_surf)
-        current_y += line_spacing  # Move to next line position
-    
-    # If we skipped the animation, make sure all text is visible
-    if skip_animation:
-        # Redraw everything for the final state
-        draw_panel(surface, rect)
-        temp_blit_y = inner_rect.top
-        for completed_line_surf in rendered_lines_surfaces:
-            surface.blit(completed_line_surf, (inner_rect.left, temp_blit_y))
-            temp_blit_y += line_spacing
-        pygame.display.update(rect)
+        if not animation_fully_completed: break  # If quit, break from line loop
 
-    # Final state of the rect is now drawn.
-    return skip_animation  # Return whether the animation was skipped
+        # Current line is fully typed or skipped
+        completed_line_surf = font.render(line_text_to_type, True, color)  # Render the full line
+        rendered_lines_surfaces.append(completed_line_surf)
+        current_y += line_spacing
+        
+        if skip_animation:  # If skipped, break from rendering further lines
+            break
+
+    # Final redraw of the fully typed/skipped text within the rect
+    draw_panel(surface, rect, border_radius=10)
+    temp_blit_y = inner_rect.top
+    for final_line_surf in rendered_lines_surfaces:
+        surface.blit(final_line_surf, (inner_rect.left, temp_blit_y))
+        temp_blit_y += line_spacing
+    pygame.display.update(rect)
+
+    typewriter_is_busy = False
+    if game_instance and animation_fully_completed:  # Only call callback if animation wasn't quit
+        game_instance.on_typewriter_line_completed()
+    
+    return animation_fully_completed
 
 # The rest of the code remains unchanged.
 game = None
@@ -826,7 +840,7 @@ def display_gameplay():
         game = Game()
         logger.info("New game instance created")
         if game.game_state == GameState.PLAYING:
-            play_sound("quest_new")
+            game.play_sound_event = "quest_new"  # Use game's sound event system
 
     screen.fill(DARK_GREY)
     if background_image:
@@ -836,11 +850,15 @@ def display_gameplay():
         overlay.fill((DARK_GREY[0], DARK_GREY[1], DARK_GREY[2], 100))
         screen.blit(overlay, (0, 0))
 
-    # Get the latest text content from the game
-    narrative, options = game.get_display_text()
+    narrative_lines, options = game.get_display_text()
 
-    # Render the narrative text with proper wrapping
-    render_text_wrapped(screen, "\n".join(narrative), font_small, WHITE, NARRATIVE_RECT)
+    # If typewriter is not busy, render text normally.
+    # If typewriter IS busy, it handles its own drawing within NARRATIVE_RECT.
+    # The main loop will call typewriter_effect if game.awaiting_typewriter_completion is true.
+    # So, display_gameplay just needs to render the current narrative if typewriter is not active.
+    if not typewriter_is_busy:
+        render_text_wrapped(screen, "\n".join(narrative_lines), font_small, WHITE, NARRATIVE_RECT)
+    # Else: typewriter_effect is handling the narrative panel drawing.
 
     # Display the options panel
     draw_panel(screen, OPTIONS_RECT, border_color=BLUE, border_radius=10)
@@ -926,7 +944,7 @@ def display_gameplay():
     strength_text = f"Strength: {game.player.strength}"
     draw_stat_bar(
         screen, strength_bar_rect,
-        game.player.strength, game.player.strength, # Max = current for display
+        game.player.strength, game.player.strength,  # Max = current for display
         STRENGTH_BAR_FG, STRENGTH_BAR_BG,
         strength_text, font_small
     )
@@ -977,7 +995,7 @@ def display_gameplay():
         npc_strength_text = f"Strength: {game.current_npc.strength}"
         draw_stat_bar(
             screen, npc_strength_bar_rect,
-            game.current_npc.strength, game.current_npc.strength, # Max = current for display
+            game.current_npc.strength, game.current_npc.strength,  # Max = current for display
             STRENGTH_BAR_FG, STRENGTH_BAR_BG,
             npc_strength_text, font_small
         )
@@ -1023,6 +1041,13 @@ def display_gameplay():
         current_app_screen = AppScreen.OUTRO_VICTORY
     
     # Instructions for player at the bottom
+    help_text_str = "Press 1-3 to select an option. Press Q to quit to menu."
+    if game.active_dialogue_npc:
+        if game.awaiting_typewriter_completion and typewriter_is_busy:  # Check typewriter_is_busy too
+            help_text_str = "Press SPACE/ENTER to skip. (Q to Menu)"
+        elif game.dialogue_requires_player_advance:
+            help_text_str = "Press ENTER to continue. (Q to Menu)"
+    
     if game.game_state == GameState.PLAYING:
         help_panel_rect = pygame.Rect(
             SCREEN_WIDTH // 4,
@@ -1032,7 +1057,7 @@ def display_gameplay():
         )
         draw_panel(screen, help_panel_rect, alpha=150, border_radius=5)
         
-        help_text = font_small.render("Press 1-3 to select an option. Press Q to quit.", True, WHITE)
+        help_text = font_small.render(help_text_str, True, WHITE)
         help_rect = help_text.get_rect(center=help_panel_rect.center)
         screen.blit(help_text, help_rect)
     
@@ -1041,7 +1066,7 @@ def display_gameplay():
 
 def main():
     global current_app_screen, menu_selection, settings_menu_selection, game, current_intro_line, SCREEN_WIDTH, SCREEN_HEIGHT, screen
-    global current_resolution_index, fullscreen_enabled, master_volume, music_volume, sfx_volume
+    global current_resolution_index, fullscreen_enabled, master_volume, music_volume, sfx_volume, typewriter_is_busy
     logger.info("Main function started.")
 
     # Load assets at the beginning
@@ -1227,21 +1252,34 @@ def main():
                                 game.ai_dm.update_quest()
                             logger.info("New game instance created for GAMEPLAY screen.")
                         if game and game.game_state == GameState.PLAYING:
-                            if event.key in (pygame.K_1, pygame.K_2, pygame.K_3):
+                            # Check for dialogue advancement keys first
+                            if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER or event.key == pygame.K_SPACE:  # Added K_SPACE
+                                if game.active_dialogue_npc and \
+                                   game.dialogue_requires_player_advance and \
+                                   not game.awaiting_typewriter_completion:
+                                    logger.info(f"GAMEPLAY: Key {pygame.key.name(event.key)} detected to advance dialogue.")  # Clarified log
+                                    game.player_advance_dialogue_key()
+                                else:
+                                    # This case means Enter/Space was pressed, but game wasn't ready for dialogue advance
+                                    logger.info(f"GAMEPLAY: Key {pygame.key.name(event.key)} pressed, but conditions not met for dialogue advance. ActiveNPC: {bool(game.active_dialogue_npc)}, ReqAdv: {game.dialogue_requires_player_advance}, AwaitTWCompletion(game): {game.awaiting_typewriter_completion}, TypewriterBusy(main): {typewriter_is_busy}")
+                            # Then check for numbered choices
+                            elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3):
                                 choice = {pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3}.get(event.key)
-                                logger.info(f"Player input in gameplay: {choice}")
+                                logger.info(f"Player input in gameplay: {choice}")  # This log is from main.py
                                 play_sound("player_action")
-                                game.handle_input(choice)
+                                game.handle_input(choice)  # game.handle_input will log if it's ignored
                                 if game.last_action_led_to_quest_complete:
                                     play_sound("quest_complete")
                                     game.last_action_led_to_quest_complete = False
                                 if game.last_action_led_to_new_quest:
                                     play_sound("quest_new")
                                     game.last_action_led_to_new_quest = False
-
                             elif event.key == pygame.K_q:
                                 logger.info("Quit from gameplay screen.")
                                 current_app_screen = AppScreen.MAIN_MENU
+                            # Fallback for other keys if dialogue is active and not handled above
+                            elif game.active_dialogue_npc:
+                                logger.info(f"GAMEPLAY: Unhandled key {pygame.key.name(event.key)} ({event.key}) pressed. ActiveDialogueNPC: {game.active_dialogue_npc.name}, DialogueRequiresAdvance: {game.dialogue_requires_player_advance}, AwaitingTypewriterCompletion(game): {game.awaiting_typewriter_completion}, TypewriterIsBusy(main): {typewriter_is_busy}")
 
                     elif current_app_screen in [AppScreen.OUTRO_VICTORY, AppScreen.OUTRO_GAMEOVER]:
                         if event.key == pygame.K_q:
@@ -1254,7 +1292,34 @@ def main():
                             game = None  # Clear the game state
                             logger.info("Returning to Main Menu from outro screen.")
 
-            # Screen rendering based on state
+            # --- Sound Event Handling ---
+            if game and game.play_sound_event:
+                sound_to_play = None
+                vol = sfx_volume * master_volume
+                if game.play_sound_event == "dialogue_start": sound_to_play = "menu_select"
+                elif game.play_sound_event == "dialogue_advance": sound_to_play = "menu_navigate"
+                elif game.play_sound_event == "dialogue_end": sound_to_play = "menu_select"
+                elif game.play_sound_event == "quest_new": sound_to_play = "quest_new"
+                elif game.play_sound_event == "quest_complete": sound_to_play = "quest_complete"
+                
+                if sound_to_play:
+                    play_sound(sound_to_play, volume=vol)
+                game.play_sound_event = None  # Consume the event
+            
+            # --- Game Logic for starting typewriter ---
+            # This must be AFTER event handling and BEFORE drawing,
+            # so typewriter_is_busy is correctly set for the display_gameplay call.
+            if current_app_screen == AppScreen.GAMEPLAY and game:
+                if game.awaiting_typewriter_completion and not typewriter_is_busy:
+                    if game.narrative: 
+                        current_dialogue_line = game.narrative[0] 
+                        logger.debug(f"Main loop initiating typewriter for: {current_dialogue_line}")
+                        # This call is blocking for the duration of the line typing/skip
+                        if not typewriter_effect(screen, current_dialogue_line, font_small, WHITE, NARRATIVE_RECT, speed=30, game_instance=game):
+                            running = False  # Typewriter effect was quit
+                            logger.info("Exiting due to quit during typewriter effect.")
+
+            # --- Screen Drawing ---
             previous_app_screen = current_app_screen  # For logging screen transitions
             
             if current_app_screen == AppScreen.LOADING:
