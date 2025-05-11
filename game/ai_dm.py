@@ -17,6 +17,8 @@ class AIDM:
 
     def update_quest(self):
         logger.info(f"AIDM attempting to update quest. Current game state: {self.game.game_state.name}")
+        # Reset flags at the beginning of an attempt to update a quest
+        self.game.last_action_led_to_new_quest = False
         if self.game.game_state != GameState.PLAYING:  # Check game state
             self.game.current_quest = None
             logger.info("AIDM: Quest update skipped, game not in PLAYING state.")
@@ -53,6 +55,7 @@ class AIDM:
             self.game.player.add_quest(new_quest)
             
             logger.info(f"AIDM: New quest assigned: '{new_quest['description']}' targeting NPC: {target_npc.name}")
+            self.game.last_action_led_to_new_quest = True # Set flag for sound effect
             # Avoid adding duplicate "New Quest" messages if narrative already has it
             new_quest_message = f"New Quest: {new_quest['description']}"
             if not self.game.narrative or new_quest_message not in self.game.narrative[-1]:
@@ -161,6 +164,7 @@ class AIDM:
         """Handle quest completion based on quest type."""
         if not self.game.current_quest:
             logger.warning("AIDM: complete_quest called but no current quest was active.")
+            self.game.last_action_led_to_quest_complete = False # Ensure flag is reset
             return False
             
         completed_quest = self.game.current_quest
@@ -178,6 +182,7 @@ class AIDM:
         
         # Clear current quest
         self.game.current_quest = None
+        self.game.last_action_led_to_quest_complete = True # Set flag for sound effect
         
         # Check if all NPCs are defeated after completing the quest
         all_npcs_defeated = all(npc.health <= 0 for npc in self.game.npcs)

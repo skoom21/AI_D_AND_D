@@ -12,6 +12,8 @@ class NPC:
         self.disposition = disposition   # "hostile", "neutral", "friendly"
         self.inventory = []              # For merchants or loot
         self.quest_info = None           # For quest-giving NPCs
+        self.dialogue_lines: list[str] = []  # Stores lines from a single Gemini API call
+        self.current_dialogue_index: int = 0 # Tracks which line to show next
 
     def take_damage(self, damage, attacker_strength=0):
         # Apply strength modifier to damage

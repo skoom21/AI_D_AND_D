@@ -10,6 +10,7 @@ from game.game_state import GameState
 class AppScreen(Enum):
     LOADING = auto()
     MAIN_MENU = auto()
+    SETTINGS = auto()  # New settings screen state
     INTRO = auto()
     GAMEPLAY = auto()
     OUTRO_VICTORY = auto()
@@ -52,9 +53,27 @@ info = pygame.display.Info()
 SYSTEM_WIDTH, SYSTEM_HEIGHT = info.current_w, info.current_h
 
 # Screen settings - default values, will be updated based on system
-BASE_WIDTH, BASE_HEIGHT = 1280, 720
+# Use system's current resolution as the base/default
+BASE_WIDTH, BASE_HEIGHT = SYSTEM_WIDTH, SYSTEM_HEIGHT
 SCREEN_WIDTH = min(int(SYSTEM_WIDTH * 0.8), BASE_WIDTH)
 SCREEN_HEIGHT = min(int(SYSTEM_HEIGHT * 0.8), BASE_HEIGHT)
+
+# --- Game Settings Variables ---
+SUPPORTED_RESOLUTIONS = [(800, 600), (1024, 768), (1280, 720), (1600, 900), (1920, 1080)]
+try:
+    current_resolution_index = SUPPORTED_RESOLUTIONS.index((SCREEN_WIDTH, SCREEN_HEIGHT))
+except ValueError:
+    try:
+        current_resolution_index = SUPPORTED_RESOLUTIONS.index((BASE_WIDTH, BASE_HEIGHT))
+    except ValueError:
+        current_resolution_index = 0
+        SCREEN_WIDTH, SCREEN_HEIGHT = SUPPORTED_RESOLUTIONS[current_resolution_index]
+
+master_volume = 1.0  # Range 0.0 to 1.0
+music_volume = 0.3   # Range 0.0 to 1.0 (initial value from main)
+sfx_volume = 0.7     # Range 0.0 to 1.0 (initial value from play_sound default)
+fullscreen_enabled = True
+# --- End Game Settings Variables ---
 
 # Make the screen resizable
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
@@ -74,11 +93,107 @@ LIGHT_GREY = (200, 200, 200)
 DARKER_GREY = (30, 30, 30)
 PANEL_BG = (40, 40, 45)
 
-# UI Theme
-HEALTH_BAR_BG = (80, 0, 0)
-HEALTH_BAR_FG = (220, 30, 30)
-STRENGTH_BAR_BG = (0, 50, 80)
-STRENGTH_BAR_FG = (30, 100, 220)
+# Define colors for health and strength bars
+HEALTH_BAR_FG = (0, 255, 0)  # Green
+HEALTH_BAR_BG = (50, 0, 0)   # Dark Red
+STRENGTH_BAR_FG = (0, 0, 255) # Blue
+STRENGTH_BAR_BG = (0, 0, 50)  # Dark Blue
+
+# --- Sound Assets ---
+SOUND_DIR = os.path.join("assets", "sounds")
+IMAGE_DIR = os.path.join("assets", "images")  # For background images
+
+game_sounds = {}
+background_music = None
+background_image = None
+
+def load_assets():
+    """Loads all game sounds and background image."""
+    global background_music, background_image, game_sounds
+    logger.info("Loading assets...")
+
+    # Load background image
+    try:
+        img_path = os.path.join(IMAGE_DIR, "background_main.png")  # Example image
+        if os.path.exists(img_path):
+            background_image = pygame.image.load(img_path).convert()
+            logger.info(f"Loaded background image: {img_path}")
+        else:
+            logger.warning(f"Background image not found: {img_path}")
+    except pygame.error as e:
+        logger.error(f"Error loading background image: {e}")
+
+    # Load sounds
+    sound_files = {
+        "menu_navigate": "menu_navigate.wav",
+        "menu_select": "menu_select.wav",
+        "typewriter_char": "typewriter_char.wav",
+        "quest_new": "quest_new.wav",
+        "quest_complete": "quest_complete.wav",
+        "player_action": "player_action.wav",  # Generic action sound
+        "error": "error.wav"  # For invalid actions
+    }
+    for sound_name, file_name in sound_files.items():
+        path = os.path.join(SOUND_DIR, file_name)
+        if os.path.exists(path):
+            try:
+                game_sounds[sound_name] = pygame.mixer.Sound(path)
+                logger.info(f"Loaded sound: {file_name} as {sound_name}")
+            except pygame.error as e:
+                logger.error(f"Error loading sound {file_name}: {e}")
+                game_sounds[sound_name] = None
+        else:
+            logger.warning(f"Sound file not found: {path}. {sound_name} will be silent.")
+            game_sounds[sound_name] = None
+
+    # Load background music
+    music_path_mp3 = os.path.join(SOUND_DIR, "background_music.mp3")
+    music_path_ogg = os.path.join(SOUND_DIR, "background_music.ogg")
+    
+    music_loaded_successfully = False
+
+    # Try MP3 first
+    if os.path.exists(music_path_mp3):
+        logger.info(f"Attempting to load background music: {music_path_mp3}")
+        try:
+            pygame.mixer.music.load(music_path_mp3)
+            background_music = music_path_mp3 # Store path to indicate it's loaded
+            music_loaded_successfully = True
+            logger.info(f"Successfully loaded background music: {music_path_mp3}")
+        except pygame.error as e:
+            logger.error(f"Error loading MP3 background music {music_path_mp3}: {e}")
+            # If MP3 fails, and OGG exists, we'll try OGG next
+            if os.path.exists(music_path_ogg):
+                logger.info(f"MP3 loading failed. Attempting to load OGG fallback: {music_path_ogg}")
+            else:
+                logger.warning("MP3 loading failed, and no OGG fallback found.")
+    
+    # If MP3 didn't load or didn't exist, try OGG
+    if not music_loaded_successfully and os.path.exists(music_path_ogg):
+        logger.info(f"Attempting to load background music: {music_path_ogg}")
+        try:
+            pygame.mixer.music.load(music_path_ogg)
+            background_music = music_path_ogg
+            music_loaded_successfully = True
+            logger.info(f"Successfully loaded background music: {music_path_ogg}")
+        except pygame.error as e:
+            logger.error(f"Error loading OGG background music {music_path_ogg}: {e}")
+
+    if not music_loaded_successfully:
+        logger.warning(f"Background music file not found or could not be loaded (checked for .mp3 and .ogg).")
+        background_music = None
+        
+    logger.info("Asset loading complete.")
+
+def play_sound(sound_name, volume=None):  # Modified to accept optional volume
+    """Plays a sound from the game_sounds dictionary if it exists."""
+    if sound_name in game_sounds and game_sounds[sound_name]:
+        sound = game_sounds[sound_name]
+        effective_volume = volume if volume is not None else (sfx_volume * master_volume)
+        sound.set_volume(effective_volume)
+        sound.play()
+    else:
+        logger.debug(f"Attempted to play sound '{sound_name}', but it was not loaded.")
 
 # Function to calculate scaled font sizes
 def get_scaled_font_size(base_size):
@@ -157,13 +272,13 @@ def update_ui_layout():
 update_ui_layout()
 
 # Helper function to draw a themed panel
-def draw_panel(surface, rect, color=PANEL_BG, border_color=GREY, border_width=2, alpha=220):
+def draw_panel(surface, rect, color=PANEL_BG, border_color=GREY, border_width=2, alpha=220, border_radius=5):
     # Create a surface with per-pixel alpha
     panel = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
     # Fill with semi-transparent color
     panel.fill((color[0], color[1], color[2], alpha))
-    # Draw border
-    pygame.draw.rect(panel, border_color, (0, 0, rect.width, rect.height), border_width)
+    # Draw border with rounded corners
+    pygame.draw.rect(panel, border_color, (0, 0, rect.width, rect.height), border_width, border_radius=border_radius)
     # Blit to main surface
     surface.blit(panel, rect)
 
@@ -190,7 +305,7 @@ def draw_stat_bar(surface, rect, current, maximum, fg_color, bg_color, text=None
 def render_text_wrapped(surface, text, font, color, rect, aa=True, bkg=None):
     """Renders text with word wrapping to fit within a given pygame.Rect."""
     # First draw the panel background
-    draw_panel(surface, rect)
+    draw_panel(surface, rect, border_radius=10)
     
     # Adjust rect for padding
     padding = int(min(rect.width, rect.height) * 0.05)
@@ -252,10 +367,10 @@ def render_text_wrapped(surface, text, font, color, rect, aa=True, bkg=None):
         
     return y
 
-def typewriter_effect(surface, text, font, color, rect, speed=15, sound=None):
+def typewriter_effect(surface, text, font, color, rect, speed=15):
     """Displays text with a typewriter effect. Clears the rect area first."""
     # First draw the panel background
-    draw_panel(surface, rect)
+    draw_panel(surface, rect, border_radius=10)
     
     # Adjust rect for padding
     padding = int(min(rect.width, rect.height) * 0.05)
@@ -300,9 +415,10 @@ def typewriter_effect(surface, text, font, color, rect, speed=15, sound=None):
                 break
                 
             typed_chars_for_current_line += char_to_type
+            play_sound("typewriter_char", volume=0.5)
 
             # Redraw the panel for each frame
-            draw_panel(surface, rect)
+            draw_panel(surface, rect, border_radius=10)
 
             # Blit previously completed lines
             temp_blit_y = inner_rect.top
@@ -362,10 +478,26 @@ def typewriter_effect(surface, text, font, color, rect, speed=15, sound=None):
 game = None
 current_app_screen = AppScreen.LOADING
 menu_selection = 0
+settings_menu_selection = 0  # For navigating settings screen options
+SETTINGS_OPTIONS = [
+    "Resolution", 
+    "Fullscreen", 
+    "Master Volume", 
+    "Music Volume", 
+    "SFX Volume", 
+    "Apply", 
+    "Back to Main Menu"
+]
 
 
 def display_loading_screen():
     screen.fill(DARK_GREY)
+    if background_image:
+        scaled_bg = pygame.transform.scale(background_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
+        screen.blit(scaled_bg, (0, 0))
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((DARK_GREY[0], DARK_GREY[1], DARK_GREY[2], 180))
+        screen.blit(overlay, (0, 0))
     loading_text = font_large.render("Loading...", True, WHITE)
     text_rect = loading_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
     screen.blit(loading_text, text_rect)
@@ -373,11 +505,17 @@ def display_loading_screen():
     pygame.time.wait(2000)
 
 
-MENU_OPTIONS = ["Start New Game", "Options", "Quit"]
+MENU_OPTIONS = ["Start New Game", "Settings", "Quit"]
 
 
 def display_main_menu():
     screen.fill(DARK_GREY)
+    if background_image:
+        scaled_bg = pygame.transform.scale(background_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
+        screen.blit(scaled_bg, (0, 0))
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((DARK_GREY[0], DARK_GREY[1], DARK_GREY[2], 150))
+        screen.blit(overlay, (0, 0))
     
     # Draw a decorative header panel
     header_rect = pygame.Rect(
@@ -386,7 +524,7 @@ def display_main_menu():
         int(SCREEN_WIDTH * 0.8),
         int(SCREEN_HEIGHT * 0.2)
     )
-    draw_panel(screen, header_rect, color=DARKER_GREY, border_color=GREEN, border_width=3)
+    draw_panel(screen, header_rect, color=DARKER_GREY, border_color=GREEN, border_width=3, border_radius=10)
     
     # Draw a decorative background panel for menu options
     menu_panel_rect = pygame.Rect(
@@ -395,7 +533,7 @@ def display_main_menu():
         int(SCREEN_WIDTH * 0.6),
         int(SCREEN_HEIGHT * 0.4)
     )
-    draw_panel(screen, menu_panel_rect, alpha=180)
+    draw_panel(screen, menu_panel_rect, alpha=180, border_radius=10)
     
     # Title with shadow effect
     shadow_offset = max(2, int(get_scaled_font_size(3)))
@@ -423,14 +561,13 @@ def display_main_menu():
             color = BLUE
             option_font = font_large
             # Draw highlight box
-            option_box = pygame.Rect(
+            option_box_rect = pygame.Rect(
                 menu_panel_rect.left + 20,
                 menu_panel_rect.top + 20 + (i * option_spacing),
                 menu_panel_rect.width - 40,
                 option_spacing - 10
             )
-            pygame.draw.rect(screen, DARKER_GREY, option_box, border_radius=5)
-            pygame.draw.rect(screen, color, option_box, 2, border_radius=5)
+            draw_panel(screen, option_box_rect, color=DARKER_GREY, border_color=color, border_width=3, alpha=230, border_radius=8)
         else:
             # Unselected option
             color = WHITE
@@ -455,6 +592,79 @@ def display_main_menu():
     pygame.display.flip()
 
 
+def display_settings_screen():
+    """Displays the settings screen and handles settings adjustments."""
+    global settings_menu_selection, current_resolution_index, fullscreen_enabled
+    global master_volume, music_volume, sfx_volume, SCREEN_WIDTH, SCREEN_HEIGHT, screen
+    
+    screen.fill(DARK_GREY)
+    if background_image:
+        scaled_bg = pygame.transform.scale(background_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
+        screen.blit(scaled_bg, (0, 0))
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((DARK_GREY[0], DARK_GREY[1], DARK_GREY[2], 180)) # Darker overlay for settings
+        screen.blit(overlay, (0, 0))
+
+    # Settings panel
+    settings_panel_rect = pygame.Rect(
+        int(SCREEN_WIDTH * 0.15),
+        int(SCREEN_HEIGHT * 0.1),
+        int(SCREEN_WIDTH * 0.7),
+        int(SCREEN_HEIGHT * 0.8)
+    )
+    draw_panel(screen, settings_panel_rect, color=DARKER_GREY, border_color=BLUE, border_width=3, alpha=220, border_radius=10)
+
+    # Title
+    title_surf = font_large.render("Settings", True, WHITE)
+    title_rect = title_surf.get_rect(center=(settings_panel_rect.centerx, settings_panel_rect.top + 50))
+    screen.blit(title_surf, title_rect)
+
+    option_spacing = max(45, int(settings_panel_rect.height * 0.08))
+    start_y = title_rect.bottom + 50
+
+    for i, option_text in enumerate(SETTINGS_OPTIONS):
+        color = WHITE
+        option_font = font_medium
+        
+        display_text = option_text
+        current_value_text = ""
+
+        if option_text == "Resolution":
+            current_value_text = f"{SUPPORTED_RESOLUTIONS[current_resolution_index][0]} x {SUPPORTED_RESOLUTIONS[current_resolution_index][1]}"
+        elif option_text == "Fullscreen":
+            current_value_text = "On" if fullscreen_enabled else "Off"
+        elif option_text == "Master Volume":
+            current_value_text = f"{int(master_volume * 100)}%"
+        elif option_text == "Music Volume":
+            current_value_text = f"{int(music_volume * 100)}%"
+        elif option_text == "SFX Volume":
+            current_value_text = f"{int(sfx_volume * 100)}%"
+
+        if current_value_text:
+            display_text = f"{option_text}: < {current_value_text} >"
+            
+        if i == settings_menu_selection:
+            color = BLUE
+            option_font = font_large # Slightly larger for selected
+
+        text_surf = option_font.render(display_text, True, color)
+        text_rect = text_surf.get_rect(
+            midleft=(
+                settings_panel_rect.left + 50,
+                start_y + (i * option_spacing)
+            )
+        )
+        screen.blit(text_surf, text_rect)
+
+    # Controls hint
+    controls_text = "↑/↓: Navigate   ←/→: Change Value   ENTER: Select/Toggle   ESC: Back"
+    controls_surf = font_small.render(controls_text, True, LIGHT_GREY)
+    controls_rect = controls_surf.get_rect(midbottom=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 20))
+    screen.blit(controls_surf, controls_rect)
+    
+    pygame.display.flip()
+
+
 INTRO_TEXT = [
     "In a realm shrouded in ancient magic and lingering shadows...",
     "You awaken with a hazy memory, a sturdy resolve, and a path unknown.",
@@ -467,6 +677,12 @@ def display_intro():
     global current_intro_line, current_app_screen
     
     screen.fill(DARK_GREY)
+    if background_image:
+        scaled_bg = pygame.transform.scale(background_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
+        screen.blit(scaled_bg, (0, 0))
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((DARK_GREY[0], DARK_GREY[1], DARK_GREY[2], 120))
+        screen.blit(overlay, (0, 0))
     
     # Draw a decorative frame for the intro text
     intro_panel = pygame.Rect(
@@ -505,7 +721,7 @@ def display_intro():
         int(SCREEN_WIDTH * 0.6),
         int(SCREEN_HEIGHT * 0.15)
     )
-    draw_panel(screen, prompt_panel, border_color=BLUE)
+    draw_panel(screen, prompt_panel, border_color=BLUE, border_radius=8)
     
     # Different prompt text based on animation state
     if display_intro.line_completed:
@@ -548,6 +764,12 @@ def display_intro():
 
 def display_outro(message_lines):
     screen.fill(DARK_GREY)
+    if background_image:
+        scaled_bg = pygame.transform.scale(background_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
+        screen.blit(scaled_bg, (0, 0))
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((DARK_GREY[0], DARK_GREY[1], DARK_GREY[2], 100))
+        screen.blit(overlay, (0, 0))
     
     # Create a panel for the outro message
     outro_panel = pygame.Rect(
@@ -558,7 +780,7 @@ def display_outro(message_lines):
     )
     
     border_color = GREEN if current_app_screen == AppScreen.OUTRO_VICTORY else RED
-    draw_panel(screen, outro_panel, color=DARKER_GREY, border_color=border_color, border_width=3)
+    draw_panel(screen, outro_panel, color=DARKER_GREY, border_color=border_color, border_width=3, border_radius=10)
     
     # Display message lines with nice formatting
     y_offset = outro_panel.top + 80
@@ -582,7 +804,7 @@ def display_outro(message_lines):
         int(SCREEN_WIDTH * 0.5),
         int(SCREEN_HEIGHT * 0.1)
     )
-    draw_panel(screen, prompt_panel, border_color=BLUE)
+    draw_panel(screen, prompt_panel, border_color=BLUE, border_radius=8)
     
     prompt_text = font_medium.render("Press Q to quit or ENTER/M for Main Menu", True, WHITE)
     prompt_rect = prompt_text.get_rect(center=prompt_panel.center)
@@ -603,8 +825,16 @@ def display_gameplay():
     if not game:
         game = Game()
         logger.info("New game instance created")
+        if game.game_state == GameState.PLAYING:
+            play_sound("quest_new")
 
     screen.fill(DARK_GREY)
+    if background_image:
+        scaled_bg = pygame.transform.scale(background_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
+        screen.blit(scaled_bg, (0, 0))
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((DARK_GREY[0], DARK_GREY[1], DARK_GREY[2], 100))
+        screen.blit(overlay, (0, 0))
 
     # Get the latest text content from the game
     narrative, options = game.get_display_text()
@@ -613,10 +843,10 @@ def display_gameplay():
     render_text_wrapped(screen, "\n".join(narrative), font_small, WHITE, NARRATIVE_RECT)
 
     # Display the options panel
-    draw_panel(screen, OPTIONS_RECT, border_color=BLUE)
+    draw_panel(screen, OPTIONS_RECT, border_color=BLUE, border_radius=10)
     
     # Create character info panel for player and NPC info
-    draw_panel(screen, CHAR_INFO_RECT, border_color=GREEN)
+    draw_panel(screen, CHAR_INFO_RECT, border_color=GREEN, border_radius=10)
     
     # Display current quest if available
     if game.current_quest:
@@ -643,7 +873,7 @@ def display_gameplay():
         NARRATIVE_RECT.width,
         quest_panel_height
     )
-    draw_panel(screen, quest_panel, alpha=200)
+    draw_panel(screen, quest_panel, alpha=200, border_radius=8)
     
     # Quest title
     quest_title = font_small.render("CURRENT QUEST:", True, WHITE)
@@ -757,21 +987,18 @@ def display_gameplay():
         option_height = font_medium.get_linesize() + 10
         for i, opt in enumerate(options):
             # Draw option background with highlight effect for visual separation
-            option_rect = pygame.Rect(
+            option_rect_item = pygame.Rect(
                 OPTIONS_RECT.left + 20,
                 OPTIONS_RECT.top + 20 + (i * option_height),
                 OPTIONS_RECT.width - 40,
                 option_height
             )
             
-            # Draw subtle highlight for option background
-            highlight_color = (60, 60, 65)  # Slightly lighter than panel background
-            pygame.draw.rect(screen, highlight_color, option_rect, border_radius=3)
-            pygame.draw.rect(screen, GREY, option_rect, 1, border_radius=3)
+            draw_panel(screen, option_rect_item, color=(60, 60, 65), border_color=GREY, border_width=1, alpha=200, border_radius=5)
             
             # Draw option number in a circle
             circle_radius = option_height // 2 - 2
-            circle_center = (option_rect.left + circle_radius + 2, option_rect.centery)
+            circle_center = (option_rect_item.left + circle_radius + 2, option_rect_item.centery)
             pygame.draw.circle(screen, BLUE, circle_center, circle_radius)
             pygame.draw.circle(screen, WHITE, circle_center, circle_radius, 1)
             
@@ -783,7 +1010,7 @@ def display_gameplay():
             # Option text
             text_surf = font_medium.render(opt, True, WHITE)
             text_rect = text_surf.get_rect(
-                midleft=(option_rect.left + circle_radius*2 + 10, option_rect.centery)
+                midleft=(option_rect_item.left + circle_radius*2 + 10, option_rect_item.centery)
             )
             screen.blit(text_surf, text_rect)
     
@@ -797,24 +1024,37 @@ def display_gameplay():
     
     # Instructions for player at the bottom
     if game.game_state == GameState.PLAYING:
-        help_panel = pygame.Rect(
+        help_panel_rect = pygame.Rect(
             SCREEN_WIDTH // 4,
             SCREEN_HEIGHT - 40,
             SCREEN_WIDTH // 2,
             30
         )
-        draw_panel(screen, help_panel, alpha=150)
+        draw_panel(screen, help_panel_rect, alpha=150, border_radius=5)
         
         help_text = font_small.render("Press 1-3 to select an option. Press Q to quit.", True, WHITE)
-        help_rect = help_text.get_rect(center=help_panel.center)
+        help_rect = help_text.get_rect(center=help_panel_rect.center)
         screen.blit(help_text, help_rect)
     
     pygame.display.flip()
 
 
 def main():
-    global current_app_screen, menu_selection, game, current_intro_line, SCREEN_WIDTH, SCREEN_HEIGHT
+    global current_app_screen, menu_selection, settings_menu_selection, game, current_intro_line, SCREEN_WIDTH, SCREEN_HEIGHT, screen
+    global current_resolution_index, fullscreen_enabled, master_volume, music_volume, sfx_volume
     logger.info("Main function started.")
+
+    # Load assets at the beginning
+    load_assets()
+
+    # Start background music if loaded
+    if background_music and pygame.mixer.music.get_busy() == 0:
+        try:
+            pygame.mixer.music.play(-1, fade_ms=2000)  # Play indefinitely, fade in over 2 seconds
+            pygame.mixer.music.set_volume(music_volume * master_volume)  # Use combined volume
+            logger.info("Background music started.")
+        except pygame.error as e:
+            logger.error(f"Could not start background music: {e}")
 
     clock = pygame.time.Clock()
     running = True
@@ -865,11 +1105,14 @@ def main():
                     if current_app_screen == AppScreen.MAIN_MENU:
                         if event.key == pygame.K_UP:
                             menu_selection = (menu_selection - 1) % len(MENU_OPTIONS)
+                            play_sound("menu_navigate")
                             logger.info(f"Menu selection changed: {MENU_OPTIONS[menu_selection]}")
                         elif event.key == pygame.K_DOWN:
                             menu_selection = (menu_selection + 1) % len(MENU_OPTIONS)
+                            play_sound("menu_navigate")
                             logger.info(f"Menu selection changed: {MENU_OPTIONS[menu_selection]}")
                         elif event.key == pygame.K_RETURN:
+                            play_sound("menu_select")
                             logger.info(f"Menu option selected: {MENU_OPTIONS[menu_selection]}")
                             if MENU_OPTIONS[menu_selection] == "Start New Game":
                                 current_app_screen = AppScreen.INTRO
@@ -879,6 +1122,10 @@ def main():
                                     display_intro.line_completed = False
                                 game = None  # Reset game object for new game
                                 logger.info("Starting new game, transitioning to INTRO screen.")
+                            elif MENU_OPTIONS[menu_selection] == "Settings":
+                                current_app_screen = AppScreen.SETTINGS
+                                settings_menu_selection = 0  # Reset settings selection
+                                logger.info("Navigating to Settings screen.")
                             elif MENU_OPTIONS[menu_selection] == "Options":
                                 logger.info("Options selected - not implemented yet.")
                                 pass
@@ -892,6 +1139,7 @@ def main():
                     elif current_app_screen == AppScreen.INTRO:
                         if event.key == pygame.K_RETURN:
                             current_intro_line += 1
+                            play_sound("menu_select")
                             # Reset the line completion flag for the next line
                             if hasattr(display_intro, 'line_completed'):
                                 display_intro.line_completed = False
@@ -903,12 +1151,74 @@ def main():
                         elif event.key == pygame.K_SPACE:
                             # Skip button - go straight to gameplay
                             current_app_screen = AppScreen.GAMEPLAY
+                            play_sound("menu_select")
                             game = None  # Make sure we start with a fresh game
                             logger.info("Intro skipped with SPACE, transitioning to GAMEPLAY.")
                         elif event.key == pygame.K_q:
                             current_app_screen = AppScreen.MAIN_MENU
                             logger.info("Quit from intro, returning to main menu.")
 
+                    elif current_app_screen == AppScreen.SETTINGS:
+                        if event.key == pygame.K_UP:
+                            settings_menu_selection = (settings_menu_selection - 1) % len(SETTINGS_OPTIONS)
+                            play_sound("menu_navigate")
+                        elif event.key == pygame.K_DOWN:
+                            settings_menu_selection = (settings_menu_selection + 1) % len(SETTINGS_OPTIONS)
+                            play_sound("menu_navigate")
+                        elif event.key == pygame.K_LEFT:
+                            selected_setting = SETTINGS_OPTIONS[settings_menu_selection]
+                            if selected_setting == "Resolution":
+                                current_resolution_index = (current_resolution_index - 1) % len(SUPPORTED_RESOLUTIONS)
+                                play_sound("menu_navigate")
+                            elif selected_setting == "Master Volume":
+                                master_volume = max(0.0, round(master_volume - 0.1, 1))
+                                pygame.mixer.music.set_volume(music_volume * master_volume)  # Update immediately
+                                play_sound("menu_navigate", master_volume * sfx_volume)  # Play sound with new volume
+                            elif selected_setting == "Music Volume":
+                                music_volume = max(0.0, round(music_volume - 0.1, 1))
+                                pygame.mixer.music.set_volume(music_volume * master_volume)  # Update immediately
+                                play_sound("menu_navigate")
+                            elif selected_setting == "SFX Volume":
+                                sfx_volume = max(0.0, round(sfx_volume - 0.1, 1))
+                                play_sound("menu_navigate", master_volume * sfx_volume)  # Play sound with new volume
+                        elif event.key == pygame.K_RIGHT:
+                            selected_setting = SETTINGS_OPTIONS[settings_menu_selection]
+                            if selected_setting == "Resolution":
+                                current_resolution_index = (current_resolution_index + 1) % len(SUPPORTED_RESOLUTIONS)
+                                play_sound("menu_navigate")
+                            elif selected_setting == "Master Volume":
+                                master_volume = min(1.0, round(master_volume + 0.1, 1))
+                                pygame.mixer.music.set_volume(music_volume * master_volume)
+                                play_sound("menu_navigate", master_volume * sfx_volume)
+                            elif selected_setting == "Music Volume":
+                                music_volume = min(1.0, round(music_volume + 0.1, 1))
+                                pygame.mixer.music.set_volume(music_volume * master_volume)
+                                play_sound("menu_navigate")
+                            elif selected_setting == "SFX Volume":
+                                sfx_volume = min(1.0, round(sfx_volume + 0.1, 1))
+                                play_sound("menu_navigate", master_volume * sfx_volume)
+                        elif event.key == pygame.K_RETURN:
+                            selected_setting = SETTINGS_OPTIONS[settings_menu_selection]
+                            play_sound("menu_select")
+                            if selected_setting == "Fullscreen":
+                                fullscreen_enabled = not fullscreen_enabled
+                            elif selected_setting == "Apply":
+                                SCREEN_WIDTH, SCREEN_HEIGHT = SUPPORTED_RESOLUTIONS[current_resolution_index]
+                                flags = pygame.RESIZABLE
+                                if fullscreen_enabled:
+                                    flags |= pygame.FULLSCREEN
+                                screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), flags)
+                                update_fonts()
+                                update_ui_layout()
+                                logger.info(f"Applied settings: Resolution {SCREEN_WIDTH}x{SCREEN_HEIGHT}, Fullscreen: {fullscreen_enabled}")
+                            elif selected_setting == "Back to Main Menu":
+                                current_app_screen = AppScreen.MAIN_MENU
+                                logger.info("Returning to Main Menu from Settings.")
+                        elif event.key == pygame.K_ESCAPE:
+                            current_app_screen = AppScreen.MAIN_MENU
+                            play_sound("menu_select")
+                            logger.info("Returning to Main Menu from Settings (ESC).")
+                            
                     elif current_app_screen == AppScreen.GAMEPLAY:
                         if not game:  # Ensure game is initialized if somehow skipped intro
                             logger.warning("Game object was None when entering GAMEPLAY screen. Initializing now.")
@@ -920,18 +1230,27 @@ def main():
                             if event.key in (pygame.K_1, pygame.K_2, pygame.K_3):
                                 choice = {pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3}.get(event.key)
                                 logger.info(f"Player input in gameplay: {choice}")
+                                play_sound("player_action")
                                 game.handle_input(choice)
+                                if game.last_action_led_to_quest_complete:
+                                    play_sound("quest_complete")
+                                    game.last_action_led_to_quest_complete = False
+                                if game.last_action_led_to_new_quest:
+                                    play_sound("quest_new")
+                                    game.last_action_led_to_new_quest = False
+
                             elif event.key == pygame.K_q:
                                 logger.info("Quit from gameplay screen.")
                                 current_app_screen = AppScreen.MAIN_MENU
-                                # Don't quit the application, just return to menu
 
                     elif current_app_screen in [AppScreen.OUTRO_VICTORY, AppScreen.OUTRO_GAMEOVER]:
                         if event.key == pygame.K_q:
                             logger.info("Quit from outro screen.")
+                            play_sound("menu_select")
                             running = False
                         elif event.key == pygame.K_m or event.key == pygame.K_RETURN:
                             current_app_screen = AppScreen.MAIN_MENU
+                            play_sound("menu_select")
                             game = None  # Clear the game state
                             logger.info("Returning to Main Menu from outro screen.")
 
@@ -944,6 +1263,9 @@ def main():
 
             elif current_app_screen == AppScreen.MAIN_MENU:
                 display_main_menu()
+
+            elif current_app_screen == AppScreen.SETTINGS:  # New case for settings screen
+                display_settings_screen()
 
             elif current_app_screen == AppScreen.INTRO:
                 display_intro()
@@ -960,10 +1282,8 @@ def main():
             # Handle screen transitions
             if previous_app_screen != current_app_screen:
                 logger.info(f"App screen changed from {previous_app_screen.name} to {current_app_screen.name}")
-                # If transitioning to a different screen, reset line completion for intro
                 if current_app_screen == AppScreen.INTRO and hasattr(display_intro, 'line_completed'):
                     display_intro.line_completed = False
-                # Moved previous_app_screen update here to correctly log transitions
                 previous_app_screen = current_app_screen 
 
             # Cap at 30 FPS

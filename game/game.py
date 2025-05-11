@@ -13,6 +13,8 @@ class Game:
     def __init__(self):
         logger.info("Game object initializing.")
         self.game_state = GameState.PLAYING  # Initialize game state
+        self.last_action_led_to_new_quest = False  # Flag for sound triggers
+        self.last_action_led_to_quest_complete = False  # Flag for sound triggers
 
         # Initialize player with starting stats
         self.player = Player(health=100, max_health=100, strength=10)
@@ -29,30 +31,40 @@ class Game:
         if self.npcs:
             logger.info(f"NPCs list initialized in Game. Count: {len(self.npcs)}.")
         else:
-            logger.info("No NPCs initialized in Game.")
+            logger.info("No NPCs initialized in Game.") # Should be warning or handled
 
         self.current_quest = None
         self.narrative = ["You find yourself in a forest clearing."]
-        
+        self.current_npc = None # Initialize current_npc to None
+        self.ai_dm = None # Initialize ai_dm to None
+
         if not self.npcs:
             self.narrative.append("The world feels strangely empty. No challenges await.")
             self.game_state = GameState.VICTORY
             logger.info("No NPCs found at game start. Setting state to VICTORY.")
         else:
-            # Start with an enemy NPC for immediate engagement
-            enemy_npcs = [npc for npc in self.npcs if npc.npc_type == "enemy"]
-            self.current_npc = enemy_npcs[0] if enemy_npcs else self.npcs[0]
-            self.narrative.append(f"A {self.current_npc.name} stands before you, eyeing you warily.")
-            logger.info(f"Initial current_npc set to: {self.current_npc.name}")
+            # NPCs exist, set up AI and initial quest
+            # Initialize AI-DM first, as it will guide the initial NPC and quest
+            self.ai_dm = AIDM(self)
+            logger.info("AI-DM initialized in Game.")
 
-        # Initialize AI-DM
-        self.ai_dm = AIDM(self)
-        logger.info("AI-DM initialized in Game.")
-        
-        if self.game_state == GameState.PLAYING and self.current_npc:
-            self.ai_dm.update_quest()  # This will log its own details
-        logger.info("Game object initialized successfully.")
-        
+            # Let AIDM determine the initial quest.
+            # update_quest() will set self.current_npc to the quest's target NPC
+            # and append the quest description to self.narrative.
+            if self.game_state == GameState.PLAYING: # Should be true here
+                self.ai_dm.update_quest()
+                
+                # Log the NPC that AIDM selected for the first quest
+                if self.current_npc:
+                    logger.info(f"Initial game focus: current_npc set to '{self.current_npc.name}' by AIDM for the first quest.")
+                else:
+                    # This case means AIDM's update_quest didn't set a current_npc
+                    logger.warning("AIDM's initial update_quest did not result in a current_npc being set.")
+                    # Fallback narrative if AIDM didn't provide a quest/NPC focus
+                    if len(self.narrative) == 1 and self.narrative[0] == "You find yourself in a forest clearing.":
+                        self.narrative.append("The path ahead is unclear. Explore your surroundings.")
+            # If game_state was not PLAYING (e.g. somehow set to VICTORY already), no quest update.
+            
         # Track turns for quest difficulty adjustment
         self.turn_counter = 0
         
@@ -305,7 +317,7 @@ class Game:
         # Force update of quest targeting this NPC
         old_quest = self.current_quest
         self.current_quest = None
-        self.ai_dm.update_quest()
+        self.ai_dm.update_quest()  # This method in AIDM should set the flag if a quest is made
         
         if self.current_quest:
             self.narrative = [f"You accept a new quest from {self.current_npc.name}:"]
