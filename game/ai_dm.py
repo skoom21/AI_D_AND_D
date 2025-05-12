@@ -16,12 +16,14 @@ class AIDM:
         self.last_quest_type = None  # Track the last quest type for variety
 
     def update_quest(self):
+        self.game.is_generating_text = True  # Set flag before NLP call
         logger.info(f"AIDM attempting to update quest. Current game state: {self.game.game_state.name}")
         # Reset flags at the beginning of an attempt to update a quest
         self.game.last_action_led_to_new_quest = False
         if self.game.game_state != GameState.PLAYING:  # Check game state
             self.game.current_quest = None
             logger.info("AIDM: Quest update skipped, game not in PLAYING state.")
+            self.game.is_generating_text = False  # Clear flag
             return
 
         # Find a living NPC to be the target of a quest
@@ -55,7 +57,7 @@ class AIDM:
             self.game.player.add_quest(new_quest)
             
             logger.info(f"AIDM: New quest assigned: '{new_quest['description']}' targeting NPC: {target_npc.name}")
-            self.game.last_action_led_to_new_quest = True # Set flag for sound effect
+            self.game.last_action_led_to_new_quest = True  # Set flag for sound effect
             # Avoid adding duplicate "New Quest" messages if narrative already has it
             new_quest_message = f"New Quest: {new_quest['description']}"
             if not self.game.narrative or new_quest_message not in self.game.narrative[-1]:
@@ -69,6 +71,7 @@ class AIDM:
                 # This could be a point to trigger victory if not handled elsewhere
                 # For now, game.update() handles this transition
                 pass
+        self.game.is_generating_text = False  # Clear flag after NLP call
 
     def _select_quest_type(self, npc):
         """
@@ -141,8 +144,10 @@ class AIDM:
     def generate_dialogue(self, npc):
         """Generate NPC dialogue based on NPC type, disposition and game context.
         Returns a list of dialogue lines."""
+        self.game.is_generating_text = True  # Set flag before NLP call
         if not npc:
-            return ["There is no one here to speak with."] # Return as list
+            self.game.is_generating_text = False  # Clear flag
+            return ["There is no one here to speak with."]  # Return as list
             
         # Determine NPC's current disposition 
         disposition = npc.get_dialogue_disposition()
@@ -153,20 +158,23 @@ class AIDM:
             'quest_relevant': self.game.current_quest and 
                              self.game.current_quest.get('target_npc') == npc.name,
             'player_health': self.game.player.health / self.game.player.max_health if self.game.player.max_health > 0 else 0,
-            'npc_type': npc.npc_type # Pass npc_type to nlp_generator context
+            'npc_type': npc.npc_type  # Pass npc_type to nlp_generator context
         }
         
         # Generate dialogue using NLP
         dialogue_lines = self.nlp_generator.generate_npc_dialogue(npc.name, disposition, context)
         
         logger.info(f"AIDM generated dialogue lines for NPC {npc.name}: {dialogue_lines}")
-        return dialogue_lines # Return the list of lines
+        self.game.is_generating_text = False  # Clear flag after NLP call
+        return dialogue_lines  # Return the list of lines
 
     def complete_quest(self):
         """Handle quest completion based on quest type."""
+        self.game.is_generating_text = True  # Set flag before NLP call
         if not self.game.current_quest:
             logger.warning("AIDM: complete_quest called but no current quest was active.")
-            self.game.last_action_led_to_quest_complete = False # Ensure flag is reset
+            self.game.is_generating_text = False  # Clear flag
+            self.game.last_action_led_to_quest_complete = False  # Ensure flag is reset
             return False
             
         completed_quest = self.game.current_quest
@@ -184,7 +192,7 @@ class AIDM:
         
         # Clear current quest
         self.game.current_quest = None
-        self.game.last_action_led_to_quest_complete = True # Set flag for sound effect
+        self.game.last_action_led_to_quest_complete = True  # Set flag for sound effect
         
         # Check if all NPCs are defeated after completing the quest
         all_npcs_defeated = all(npc.health <= 0 for npc in self.game.npcs)
@@ -194,7 +202,8 @@ class AIDM:
         elif self.game.game_state == GameState.PLAYING:  # If not victory, try to get a new quest
             logger.info("AIDM: Quest completed, attempting to update for a new quest.")
             self.update_quest()
-            
+        
+        self.game.is_generating_text = False  # Clear flag before returning
         return True
 
     def determine_npc_action(self, npc):

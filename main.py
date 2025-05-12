@@ -77,7 +77,12 @@ fullscreen_enabled = True
 
 # Make the screen resizable
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
-pygame.display.set_caption("Text-Based AI D&D RPG - Enhanced Edition")
+pygame.display.set_caption("Dungeon Text - Ai Driven Fanatasy RPG")
+
+# Load and set the game icon
+assets_path = "assets"
+game_icon = pygame.image.load(os.path.join(assets_path, "images", "game_logo.png"))
+pygame.display.set_icon(game_icon)
 
 # Colors
 WHITE = (255, 255, 255)
@@ -505,18 +510,30 @@ SETTINGS_OPTIONS = [
 
 
 def display_loading_screen():
-    screen.fill(DARK_GREY)
-    if background_image:
-        scaled_bg = pygame.transform.scale(background_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
-        screen.blit(scaled_bg, (0, 0))
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((DARK_GREY[0], DARK_GREY[1], DARK_GREY[2], 180))
-        screen.blit(overlay, (0, 0))
-    loading_text = font_large.render("Loading...", True, WHITE)
-    text_rect = loading_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
-    screen.blit(loading_text, text_rect)
-    pygame.display.flip()
-    pygame.time.wait(2000)
+    screen.fill(BLACK)  # Dark background
+    logo_image = pygame.image.load(os.path.join(assets_path, "images", "game_logo.png"))
+    logo_image = pygame.transform.scale(logo_image, (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))  # Scale logo
+    logo_rect = logo_image.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+
+    # Fade in
+    for alpha in range(0, 256, 5):  # Faster fade
+        logo_image.set_alpha(alpha)
+        screen.fill(BLACK)
+        screen.blit(logo_image, logo_rect)
+        pygame.display.flip()
+        pygame.time.wait(30)  # Animation speed
+
+    pygame.time.wait(1000)  # Hold logo
+
+    # Fade out
+    for alpha in range(255, -1, -5):  # Faster fade
+        logo_image.set_alpha(alpha)
+        screen.fill(BLACK)
+        screen.blit(logo_image, logo_rect)
+        pygame.display.flip()
+        pygame.time.wait(30)  # Animation speed
+
+    logger.info("Logo animation complete.")
 
 
 MENU_OPTIONS = ["Start New Game", "Settings", "Quit"]
@@ -551,7 +568,7 @@ def display_main_menu():
     
     # Title with shadow effect
     shadow_offset = max(2, int(get_scaled_font_size(3)))
-    title_text = "Text RPG Adventure"
+    title_text = "Dungeon Text"  # Changed
     shadow_surf = font_title.render(title_text, True, BLACK)
     title_surf = font_title.render(title_text, True, GREEN)
     
@@ -562,7 +579,8 @@ def display_main_menu():
     screen.blit(title_surf, title_rect)
 
     # Subtitle
-    subtitle = font_medium.render("AI-powered D&D Adventure", True, LIGHT_GREY)
+    subtitle_text = "Ai Driven Fanatasy RPG"  # Changed
+    subtitle = font_medium.render(subtitle_text, True, LIGHT_GREY)
     subtitle_rect = subtitle.get_rect(midtop=(header_rect.centerx, title_rect.bottom + 10))
     screen.blit(subtitle, subtitle_rect)
 
@@ -850,19 +868,70 @@ def display_gameplay():
         overlay.fill((DARK_GREY[0], DARK_GREY[1], DARK_GREY[2], 100))
         screen.blit(overlay, (0, 0))
 
-    narrative_lines, options = game.get_display_text()
+    if game.is_generating_text:
+        # Display a loading indicator
+        loading_overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        loading_overlay.fill((0, 0, 0, 150)) # Semi-transparent black overlay
+        screen.blit(loading_overlay, (0,0))
 
-    # If typewriter is not busy, render text normally.
-    # If typewriter IS busy, it handles its own drawing within NARRATIVE_RECT.
-    # The main loop will call typewriter_effect if game.awaiting_typewriter_completion is true.
-    # So, display_gameplay just needs to render the current narrative if typewriter is not active.
-    if not typewriter_is_busy:
-        render_text_wrapped(screen, "\n".join(narrative_lines), font_small, WHITE, NARRATIVE_RECT)
-    # Else: typewriter_effect is handling the narrative panel drawing.
+        loading_text_str = "AI is thinking..."
+        loading_surf = font_large.render(loading_text_str, True, WHITE)
+        loading_rect = loading_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+        
+        # Simple animation for loading text (e.g., pulsing dots)
+        num_dots = (pygame.time.get_ticks() // 500) % 4
+        animated_loading_text = loading_text_str + "." * num_dots
+        animated_surf = font_large.render(animated_loading_text, True, WHITE)
+        animated_rect = animated_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+        screen.blit(animated_surf, animated_rect)
+        
+    else:
+        narrative_lines, options = game.get_display_text()
 
-    # Display the options panel
-    draw_panel(screen, OPTIONS_RECT, border_color=BLUE, border_radius=10)
-    
+        # If typewriter is not busy, render text normally.
+        # If typewriter IS busy, it handles its own drawing within NARRATIVE_RECT.
+        # The main loop will call typewriter_effect if game.awaiting_typewriter_completion is true.
+        # So, display_gameplay just needs to render the current narrative if typewriter is not active.
+        if not typewriter_is_busy:
+            render_text_wrapped(screen, "\n".join(narrative_lines), font_small, WHITE, NARRATIVE_RECT)
+        # Else: typewriter_effect is handling the narrative panel drawing.
+
+        # Display the options panel
+        draw_panel(screen, OPTIONS_RECT, border_color=BLUE, border_radius=10)
+        
+        # Show options only if we're in playing state and not generating text
+        if game.game_state == GameState.PLAYING and options:
+            option_height = font_medium.get_linesize() + 10
+            for i, opt in enumerate(options):
+                # Draw option background with highlight effect for visual separation
+                option_rect_item = pygame.Rect(
+                    OPTIONS_RECT.left + 20,
+                    OPTIONS_RECT.top + 20 + (i * option_height),
+                    OPTIONS_RECT.width - 40,
+                    option_height
+                )
+                
+                draw_panel(screen, option_rect_item, color=(60, 60, 65), border_color=GREY, border_width=1, alpha=200, border_radius=5)
+                
+                # Draw option number in a circle
+                circle_radius = option_height // 2 - 2
+                circle_center = (option_rect_item.left + circle_radius + 2, option_rect_item.centery)
+                pygame.draw.circle(screen, BLUE, circle_center, circle_radius)
+                pygame.draw.circle(screen, WHITE, circle_center, circle_radius, 1)
+                
+                # Option number
+                num_surf = font_medium.render(str(i+1), True, WHITE)
+                num_rect = num_surf.get_rect(center=circle_center)
+                screen.blit(num_surf, num_rect)
+                
+                # Option text
+                text_surf = font_medium.render(opt, True, WHITE)
+                text_rect = text_surf.get_rect(
+                    midleft=(option_rect_item.left + circle_radius*2 + 10, option_rect_item.centery)
+                )
+                screen.blit(text_surf, text_rect)
+
+    # This part is outside the "else" so it always shows, even during loading, if desired.
     # Create character info panel for player and NPC info
     draw_panel(screen, CHAR_INFO_RECT, border_color=GREEN, border_radius=10)
     
@@ -1001,53 +1070,6 @@ def display_gameplay():
         )
     
     # Show options only if we're in playing state
-    if game.game_state == GameState.PLAYING and options:
-        option_height = font_medium.get_linesize() + 10
-        for i, opt in enumerate(options):
-            # Draw option background with highlight effect for visual separation
-            option_rect_item = pygame.Rect(
-                OPTIONS_RECT.left + 20,
-                OPTIONS_RECT.top + 20 + (i * option_height),
-                OPTIONS_RECT.width - 40,
-                option_height
-            )
-            
-            draw_panel(screen, option_rect_item, color=(60, 60, 65), border_color=GREY, border_width=1, alpha=200, border_radius=5)
-            
-            # Draw option number in a circle
-            circle_radius = option_height // 2 - 2
-            circle_center = (option_rect_item.left + circle_radius + 2, option_rect_item.centery)
-            pygame.draw.circle(screen, BLUE, circle_center, circle_radius)
-            pygame.draw.circle(screen, WHITE, circle_center, circle_radius, 1)
-            
-            # Option number
-            num_surf = font_medium.render(str(i+1), True, WHITE)
-            num_rect = num_surf.get_rect(center=circle_center)
-            screen.blit(num_surf, num_rect)
-            
-            # Option text
-            text_surf = font_medium.render(opt, True, WHITE)
-            text_rect = text_surf.get_rect(
-                midleft=(option_rect_item.left + circle_radius*2 + 10, option_rect_item.centery)
-            )
-            screen.blit(text_surf, text_rect)
-    
-    # Check for game state changes and update app screen accordingly
-    if game.game_state == GameState.GAME_OVER:
-        logger.info("Game state changed to GAME_OVER, transitioning to outro screen")
-        current_app_screen = AppScreen.OUTRO_GAMEOVER
-    elif game.game_state == GameState.VICTORY:
-        logger.info("Game state changed to VICTORY, transitioning to victory screen")
-        current_app_screen = AppScreen.OUTRO_VICTORY
-    
-    # Instructions for player at the bottom
-    help_text_str = "Press 1-3 to select an option. Press Q to quit to menu."
-    if game.active_dialogue_npc:
-        if game.awaiting_typewriter_completion and typewriter_is_busy:  # Check typewriter_is_busy too
-            help_text_str = "Press SPACE/ENTER to skip. (Q to Menu)"
-        elif game.dialogue_requires_player_advance:
-            help_text_str = "Press ENTER to continue. (Q to Menu)"
-    
     if game.game_state == GameState.PLAYING:
         help_panel_rect = pygame.Rect(
             SCREEN_WIDTH // 4,
@@ -1056,6 +1078,12 @@ def display_gameplay():
             30
         )
         draw_panel(screen, help_panel_rect, alpha=150, border_radius=5)
+        
+        # Modify help text if AI is thinking
+        if game.is_generating_text:
+            help_text_str = "AI is thinking... (Q to Menu)"
+        else:
+            help_text_str = "Press 1-3 to select an option. Press Q to quit to menu."
         
         help_text = font_small.render(help_text_str, True, WHITE)
         help_rect = help_text.get_rect(center=help_panel_rect.center)
@@ -1249,10 +1277,25 @@ def main():
                             logger.warning("Game object was None when entering GAMEPLAY screen. Initializing now.")
                             game = Game()
                             if game.game_state == GameState.PLAYING and game.current_npc:
-                                game.ai_dm.update_quest()
+                                game.ai_dm.update_quest() # This might trigger NLP
                             logger.info("New game instance created for GAMEPLAY screen.")
+                        
                         if game and game.game_state == GameState.PLAYING:
-                            # Check for dialogue advancement keys first
+                            # If AI is generating text, only allow quit or dialogue advancement if applicable
+                            if game.is_generating_text:
+                                if event.key == pygame.K_q:
+                                    logger.info("Quit from gameplay screen while AI is thinking.")
+                                    current_app_screen = AppScreen.MAIN_MENU
+                                # Potentially allow skipping typewriter even if AI is thinking in background for next step
+                                elif (event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER or event.key == pygame.K_SPACE) and \
+                                     game.active_dialogue_npc and game.awaiting_typewriter_completion and typewriter_is_busy:
+                                    logger.info(f"GAMEPLAY (AI thinking): Key {pygame.key.name(event.key)} to skip typewriter.")
+                                    pass # The typewriter loop will catch this
+                                else:
+                                    logger.debug(f"Key {pygame.key.name(event.key)} ignored while AI is generating text.")
+                                continue # Skip other gameplay inputs if AI is busy
+
+                            # Check for dialogue advancement keys first (if not generating text)
                             if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER or event.key == pygame.K_SPACE:  # Added K_SPACE
                                 if game.active_dialogue_npc and \
                                    game.dialogue_requires_player_advance and \
@@ -1260,9 +1303,7 @@ def main():
                                     logger.info(f"GAMEPLAY: Key {pygame.key.name(event.key)} detected to advance dialogue.")  # Clarified log
                                     game.player_advance_dialogue_key()
                                 else:
-                                    # This case means Enter/Space was pressed, but game wasn't ready for dialogue advance
-                                    logger.info(f"GAMEPLAY: Key {pygame.key.name(event.key)} pressed, but conditions not met for dialogue advance. ActiveNPC: {bool(game.active_dialogue_npc)}, ReqAdv: {game.dialogue_requires_player_advance}, AwaitTWCompletion(game): {game.awaiting_typewriter_completion}, TypewriterBusy(main): {typewriter_is_busy}")
-                            # Then check for numbered choices
+                                    logger.info(f"GAMEPLAY: Key {pygame.key.name(event.key)} pressed, but conditions not met for dialogue advance.")
                             elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3):
                                 choice = {pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3}.get(event.key)
                                 logger.info(f"Player input in gameplay: {choice}")  # This log is from main.py
@@ -1277,9 +1318,6 @@ def main():
                             elif event.key == pygame.K_q:
                                 logger.info("Quit from gameplay screen.")
                                 current_app_screen = AppScreen.MAIN_MENU
-                            # Fallback for other keys if dialogue is active and not handled above
-                            elif game.active_dialogue_npc:
-                                logger.info(f"GAMEPLAY: Unhandled key {pygame.key.name(event.key)} ({event.key}) pressed. ActiveDialogueNPC: {game.active_dialogue_npc.name}, DialogueRequiresAdvance: {game.dialogue_requires_player_advance}, AwaitingTypewriterCompletion(game): {game.awaiting_typewriter_completion}, TypewriterIsBusy(main): {typewriter_is_busy}")
 
                     elif current_app_screen in [AppScreen.OUTRO_VICTORY, AppScreen.OUTRO_GAMEOVER]:
                         if event.key == pygame.K_q:

@@ -13,6 +13,7 @@ class Game:
     def __init__(self):
         logger.info("Game object initializing.")
         self.game_state = GameState.PLAYING  # Initialize game state
+        self.is_generating_text = False  # Flag for NLP generation in progress
         self.last_action_led_to_new_quest = False  # Flag for sound triggers
         self.last_action_led_to_quest_complete = False  # Flag for sound triggers
 
@@ -34,25 +35,52 @@ class Game:
             logger.info("No NPCs initialized in Game.")
 
         self.current_quest = None
-        self.narrative = ["You find yourself in a forest clearing."]
-        
+        # Initial narrative and current_npc selection
         if not self.npcs:
-            self.narrative.append("The world feels strangely empty. No challenges await.")
-            self.game_state = GameState.VICTORY
-            logger.info("No NPCs found at game start. Setting state to VICTORY.")
+            self.current_npc = None
+            self.narrative = ["You find yourself in a forest clearing.", "The world feels strangely empty. No challenges await."]
+            self.game_state = GameState.VICTORY  # Or some other appropriate state like NO_NPCS
+            logger.info("No NPCs found at game start. Setting state appropriately.")
         else:
-            # Start with an enemy NPC for immediate engagement
-            enemy_npcs = [npc for npc in self.npcs if npc.npc_type == "enemy"]
-            self.current_npc = enemy_npcs[0] if enemy_npcs else self.npcs[0]
-            self.narrative.append(f"A {self.current_npc.name} stands before you, eyeing you warily.")
-            logger.info(f"Initial current_npc set to: {self.current_npc.name}")
+            self.narrative = ["You find yourself in a forest clearing."]  # Base narrative for when NPCs exist
+            # Filter for living NPCs only for initial selection
+            living_npcs = [npc for npc in self.npcs if npc.health > 0]
+            if not living_npcs:  # All NPCs are somehow not alive at start
+                self.current_npc = None
+                self.narrative.append("The clearing is eerily silent. There's no one around.")
+                self.game_state = GameState.VICTORY  # Or appropriate state
+                logger.info("No living NPCs found at game start. Setting state appropriately.")
+            else:
+                quest_givers = [npc for npc in living_npcs if npc.npc_type == "quest_giver"]
+                enemy_npcs = [npc for npc in living_npcs if npc.npc_type == "enemy"]
+
+                if quest_givers:
+                    self.current_npc = random.choice(quest_givers)
+                    self.narrative.append(f"A figure of interest, {self.current_npc.name}, seems to acknowledge your presence.")
+                    logger.info(f"Initial current_npc set to Quest Giver: {self.current_npc.name}")
+                elif enemy_npcs:
+                    self.current_npc = random.choice(enemy_npcs)
+                    self.narrative.append(f"A hostile {self.current_npc.name} blocks your path, eyeing you warily!")
+                    logger.info(f"Initial current_npc set to Enemy: {self.current_npc.name}")
+                else:  # Fallback if no quest givers or enemies, but living NPCs exist
+                    self.current_npc = random.choice(living_npcs)
+                    self.narrative.append(f"You notice {self.current_npc.name} nearby.")
+                    logger.info(f"Initial current_npc set to Fallback NPC: {self.current_npc.name}")
 
         # Initialize AI-DM
         self.ai_dm = AIDM(self)
         logger.info("AI-DM initialized in Game.")
-        
+
+        # Call update_quest if game is playable and there's an NPC to interact with
         if self.game_state == GameState.PLAYING and self.current_npc:
-            self.ai_dm.update_quest()  # This will log its own details
+            self.ai_dm.update_quest()
+        elif self.game_state == GameState.PLAYING and not self.current_npc:  # If game is playing but no NPC was selected (e.g. all dead)
+            if "The world feels strangely empty. No challenges await." not in self.narrative and \
+               "The clearing is eerily silent. There's no one around." not in self.narrative:
+                self.narrative.append("No challenges await.")
+            # Ensure game state is not PLAYING if no NPCs
+            self.game_state = GameState.VICTORY  # Or a more specific state like NO_LIVING_NPCS
+
         logger.info("Game object initialized successfully.")
         
         # Track turns for quest difficulty adjustment
