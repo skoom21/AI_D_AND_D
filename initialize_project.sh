@@ -1,70 +1,53 @@
 #!/bin/bash
+# Script to initialize the Text RPG project on Linux/macOS
 
-# Navigate to the project directory (if the script is not already there)
-# SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-# cd "$SCRIPT_DIR"
-
-# Define the virtual environment directory name
-VENV_DIR=".venv"
-
-# Check if Python 3 is installed
+echo "Checking for Python 3..."
 if ! command -v python3 &> /dev/null
 then
-    echo "Python 3 could not be found. Please install Python 3 and try again."
+    echo "Python 3 could not be found."
+    echo "Please install Python 3."
     exit 1
 fi
 
-# Create a virtual environment
-if [ ! -d "$VENV_DIR" ]
-then
-    echo "Creating virtual environment..."
-    python3 -m venv $VENV_DIR
-    if [ $? -ne 0 ]; then
-        echo "Failed to create virtual environment. Please check your Python installation."
-        exit 1
-    fi
-else
-    echo "Virtual environment '$VENV_DIR' already exists."
-fi
+PYTHON_EXE=$(command -v python3)
+echo "Found Python 3 at: $PYTHON_EXE"
 
-# Activate the virtual environment
-# The activation script path differs between OSes
-if [[ "$OSTYPE" == "linux-gnu"* || "$OSTYPE" == "darwin"* ]]; then
-    source "$VENV_DIR/bin/activate"
-elif [[ "$OSTYPE" == "cygwin" || "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
-    source "$VENV_DIR/Scripts/activate"
-else
-    echo "Unsupported OS for venv activation. Please activate manually: source $VENV_DIR/bin/activate or $VENV_DIR\Scripts\activate"
+echo "Creating Python virtual environment (venv)..."
+$PYTHON_EXE -m venv venv
+if [ $? -ne 0 ]; then
+    echo "Failed to create virtual environment."
     exit 1
 fi
 
-echo "Virtual environment activated."
+echo "Activating virtual environment and installing dependencies..."
+# shellcheck disable=SC1091
+source venv/bin/activate
 
-# Upgrade pip
-echo "Upgrading pip..."
-python3 -m pip install --upgrade pip
-
-# Install dependencies
-if [ -f "requirements.txt" ]
-then
-    echo "Installing dependencies from requirements.txt..."
-    python3 -m pip install -r requirements.txt
-    if [ $? -ne 0 ]; then
-        echo "Failed to install dependencies. Please check requirements.txt and your internet connection."
-        # Deactivate venv before exiting on error
-        deactivate
-        exit 1
-    fi
-else
-    echo "requirements.txt not found. Skipping dependency installation."
+pip install --upgrade pip
+pip install google-generativeai pygame python-dotenv
+if [ $? -ne 0 ]; then
+    echo "Failed to install Python packages."
+    deactivate
+    exit 1
 fi
 
-# Run the main application
-echo "Running main.py..."
-python3 main.py
+echo "Dependencies installed successfully."
 
-# Deactivate the virtual environment upon exiting the script (optional)
-# echo "Deactivating virtual environment..."
-# deactivate
+# Prompt for API Key and save to .env file
+read -rp "Please enter your Gemini API Key: " GEMINI_API_KEY
 
-echo "Script finished."
+echo "Saving API key to .env file..."
+echo "GEMINI_API_KEY=$GEMINI_API_KEY" > .env
+
+# Deactivate environment
+deactivate
+
+echo
+echo "Setup Complete!"
+echo
+echo "To activate the virtual environment in the future, run:"
+echo "source venv/bin/activate"
+echo
+echo "Your Gemini API Key has been saved to the .env file."
+
+exit 0
