@@ -1,13 +1,6 @@
 @echo off
 REM Batch script to initialize the Text RPG project on Windows
 
-echo Checking for Python 3...
-python --version > NUL 2>&1
-if %errorlevel% neq 0 (
-    echo Python 3 is not installed or not found in PATH.
-    echo Please install Python 3 (https://www.python.org/) and add it to your PATH.
-    goto :eof
-)
 
 echo Creating Python virtual environment (venv)...
 python -m venv venv

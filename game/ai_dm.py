@@ -26,6 +26,10 @@ class AIDM:
             self.game.is_generating_text = False  # Clear flag
             return
 
+        # Ensure narrative is initialized
+        if self.game.narrative is None:
+            self.game.narrative = []
+
         # Find a living NPC to be the target of a quest
         living_npcs = [npc for npc in self.game.npcs if npc.health > 0]
         if living_npcs:
@@ -58,9 +62,9 @@ class AIDM:
             
             logger.info(f"AIDM: New quest assigned: '{new_quest['description']}' targeting NPC: {target_npc.name}")
             self.game.last_action_led_to_new_quest = True  # Set flag for sound effect
-            # Avoid adding duplicate "New Quest" messages if narrative already has it
+            # Avoid adding duplicate "New Quest" messages
             new_quest_message = f"New Quest: {new_quest['description']}"
-            if not self.game.narrative or new_quest_message not in self.game.narrative[-1]:
+            if len(self.game.narrative) == 0 or new_quest_message not in self.game.narrative[-1]:
                 self.game.narrative.append(new_quest_message)
         else:
             # No living NPCs left, so no quest can be assigned.
@@ -185,6 +189,10 @@ class AIDM:
         
         # Generate completion message
         completion_message = self.nlp_generator.generate_quest_completion(target_npc_name)
+        
+        # Ensure narrative is initialized before modifying it
+        if self.game.narrative is None:
+            self.game.narrative = []
         self.game.narrative = [completion_message]  # Reset narrative with completion message
         
         # Mark quest as completed in player's quest log
@@ -201,6 +209,9 @@ class AIDM:
                 logger.info("AIDM: Quest completed and all NPCs are defeated. Victory condition met.")
         elif self.game.game_state == GameState.PLAYING:  # If not victory, try to get a new quest
             logger.info("AIDM: Quest completed, attempting to update for a new quest.")
+            # Ensure narrative exists before calling update_quest
+            if self.game.narrative is None:
+                self.game.narrative = []
             self.update_quest()
         
         self.game.is_generating_text = False  # Clear flag before returning

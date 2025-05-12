@@ -46,6 +46,9 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
+.env
+.env.local
+
 # IDE / Editor specific
 # VSCode
 .vscode/*
