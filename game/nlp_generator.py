@@ -142,8 +142,15 @@ class NLPGenerator:
 
     def _start_generation_thread(self, prompt, generation_type_info, fallback_method, fallback_args):
         """Starts the generation thread if not already busy."""
+        # If Gemini model isn't available, just use the template immediately
+        if not self.gemini_model:
+            logger.info(f"NLPGenerator: No Gemini model available, using template for {generation_type_info['type']}.")
+            self._is_generating = False
+            return fallback_method(*fallback_args)
+            
+        # If we're already generating, use template instead of queuing
         if self.is_busy():
-            logger.warning("NLPGenerator: Generation requested while already busy. Request ignored.")
+            logger.warning(f"NLPGenerator: Generation requested while already busy. Using template for {generation_type_info['type']}.")
             return fallback_method(*fallback_args)
 
         self._is_generating = True
@@ -159,7 +166,7 @@ class NLPGenerator:
         self._generation_thread.daemon = True
         self._generation_thread.start()
         logger.info(f"NLPGenerator: Started generation thread for {generation_type_info['type']}.")
-        return None 
+        return None
 
     def _generate_quest_description_template(self, quest_type, npc_name, context=None):
         logger.info(f"NLPGenerator: Using template for quest description (NPC: {npc_name}, Type: {quest_type.name})")
@@ -212,45 +219,70 @@ class NLPGenerator:
             return [f"{npc_name} remains silent."] 
         return dialogue_lines
 
-    def generate_npc_dialogue(self, npc_name: str, disposition: str, context: dict | None = None) -> list[str] | None:
-        context = context or {}
-        fallback_args = (npc_name, disposition, context)
-        npc_type = context.get('npc_type', disposition)
-        health_percentage = context.get('health_percent', 1.0)
-        quest_relevant = context.get('quest_relevant', False)
+    def generate_npc_dialogue(self, npc_name, disposition="neutral", context=None):
+        """
+        Generate contextual dialogue lines for an NPC.
+        Disposition can be "hostile", "neutral", or "friendly".
+        Returns a list of speech lines.
+        """
+        if not context:
+            context = {}
+        npc_type = context.get('npc_type', 'enemy')
 
-        if self.gemini_model:
-            prompt = (
-                f"You are an NPC character named '{npc_name}' of type '{npc_type}' in a text-based fantasy RPG. "
-                f"Your current disposition towards the player is '{disposition}'. "
-                f"Craft a short, thematic speech (1-3 sentences) that you would say to the player. "
-                f"Use medieval fantasy language. Do not use modern terms or game mechanics. Be immersive. "
-                f"Do not include prefixes like '{npc_name} says:'. Just provide the speech itself."
-            )
-            if disposition == 'hostile':
-                prompt += f"You are aggressive and ready for a fight. "
-            elif disposition == 'friendly':
-                prompt += f"You are welcoming and helpful. "
-            elif npc_type == 'merchant':
-                prompt += f"You are keen to trade goods or offer services. "
-            elif npc_type == 'quest_giver':
-                prompt += f"You have an important task for the adventurer. "
-            else:
-                prompt += f"You are cautious but open to interaction. "
-            
-            if health_percentage < 0.3:
-                prompt += f"You are badly wounded and desperate. "
-            elif health_percentage < 0.6:
-                prompt += f"You appear injured and wary. "
-            
-            if quest_relevant:
-                prompt += f"The player is currently on a quest that involves you directly. "
-            prompt += "What is your speech?"
-
-            generation_info = {'type': 'npc_dialogue', 'npc_name': npc_name}
-            return self._start_generation_thread(prompt, generation_info, self._generate_npc_dialogue_template, fallback_args)
+        # Choose the right template category
+        if npc_type in ["merchant", "quest_giver"] and npc_type in self.templates.get('npc_dialogues', {}):
+            template_key = npc_type
         else:
-            return self._generate_npc_dialogue_template(*fallback_args)
+            template_key = disposition
+
+        # Check if templates are available for the selected key
+        if not self.templates or 'npc_dialogues' not in self.templates or template_key not in self.templates['npc_dialogues']:
+            logger.warning(f"No dialogue templates found for {template_key} NPC. Using default.")
+            template_lines = ["Greetings, traveler.", "What brings you here?"]
+        else:
+            template_lines = random.choice(self.templates['npc_dialogues'][template_key])
+            if isinstance(template_lines, str):  # Ensure it's a list
+                template_lines = [template_lines]
+                
+        # Format templates with NPC name and context
+        dialogue_lines = []
+        for line in template_lines:
+            try:
+                formatted_line = line.format(npc_name=npc_name, **context)
+                dialogue_lines.append(formatted_line)
+            except KeyError as e:
+                logger.warning(f"Template formatting error for {npc_name} dialogue: {e}")
+                dialogue_lines.append(line)  # Use unformatted as fallback
+        
+        # If no Gemini API or we're using template mode, return template text immediately
+        if not self.gemini_model:
+            logger.info(f"NLPGenerator: Using template for NPC dialogue (NPC: {npc_name}, Disposition: {disposition}, Type: {npc_type})")
+            return dialogue_lines
+
+        # Build a prompt for LLM
+        prompt = f"""
+        You are generating immersive dialogue for a fantasy RPG in the style of D&D.
+        NPC Name: {npc_name}
+        NPC Type: {npc_type}
+        Disposition: {disposition}
+        Health Status: {context.get('health_percent', 1.0) * 100:.0f}% health
+        
+        Generate 2-3 short lines of dialogue. Your response should ONLY contain the dialogue lines,
+        nothing else. Each line should be natural speech as spoken by the character directly.
+        
+        Example output:
+        "Greetings, traveler. What brings you to these parts?"
+        "I have many wares to offer, if you have coin."
+        "Beware the dangers that lurk in the forest to the east."
+        """
+
+        # Use the template as fallback if the API call fails
+        return self._start_generation_thread(
+            prompt,
+            {'type': 'npc_dialogue', 'npc_name': npc_name, 'disposition': disposition},
+            self._generate_npc_dialogue_template,
+            [npc_name, disposition, context]
+        ) or dialogue_lines  # Return the template lines if thread was started
 
     def _generate_quest_completion_template(self, npc_name, context=None):
         context = context or {}

@@ -95,6 +95,7 @@ class Game:
         self.awaiting_typewriter_completion = False  # True if a line is currently being typed out
         self.dialogue_requires_player_advance = False  # True if waiting for player to press Enter for next line
         self.play_sound_event = None  # For triggering sounds from main.py: "dialogue_start", "dialogue_advance", "dialogue_end"
+        self.dialogue_was_updated = False  # Flag to indicate dialogue was updated asynchronously
 
     def _start_dialogue_with_npc(self, npc, dialogue_lines):
         """Initiates a dialogue sequence with an NPC."""
@@ -107,6 +108,16 @@ class Game:
         self.active_dialogue_npc = npc
         npc.pending_dialogue_lines = dialogue_lines
         npc.current_dialogue_index = 0
+        
+        # Flag if this is likely template dialogue that might be updated
+        if len(dialogue_lines) == 1 and (
+            f"{npc.name} nods in greeting" in dialogue_lines[0] or
+            f"{npc.name} glares at you silently" in dialogue_lines[0]
+        ):
+            npc.using_template_dialogue = True
+        else:
+            npc.using_template_dialogue = False
+            
         self.dialogue_requires_player_advance = False  # First line starts automatically via typewriter
         self.play_sound_event = "dialogue_start"
         self._advance_dialogue()
@@ -118,6 +129,15 @@ class Game:
             return
 
         npc = self.active_dialogue_npc
+        
+        # Check if there's new content from NLPGenerator that replaced template dialog
+        if npc.using_template_dialogue and len(npc.pending_dialogue_lines) > 1:
+            # We have received updated dialogue from the NLPGenerator
+            # Restart from the beginning with the new content
+            logger.info(f"Dialogue for {npc.name} was updated from template. Starting from beginning with new content.")
+            npc.current_dialogue_index = 0
+            npc.using_template_dialogue = False  # No longer using template
+        
         if npc.current_dialogue_index < len(npc.pending_dialogue_lines):
             line = npc.pending_dialogue_lines[npc.current_dialogue_index]
             
@@ -195,6 +215,10 @@ class Game:
         logger.debug(f"Getting display text. Game state: {self.game_state.name}. Active dialogue NPC: {self.active_dialogue_npc.name if self.active_dialogue_npc else 'None'}")
         
         options = []
+        # Ensure narrative is not None
+        if not hasattr(self, 'narrative') or self.narrative is None:
+            self.narrative = ["Your adventure begins..."]
+        
         current_narrative = self.narrative 
 
         if self.active_dialogue_npc and (self.dialogue_requires_player_advance or self.awaiting_typewriter_completion):
@@ -427,7 +451,12 @@ class Game:
         
         if self.current_quest:
             self.narrative = [f"You accept a new quest from {self.current_npc.name}:"]
-            self.narrative.append(self.current_quest.get('description'))
+            # Ensure quest description is not None before adding it to narrative
+            quest_description = self.current_quest.get('description')
+            if quest_description is not None:
+                self.narrative.append(quest_description)
+            else:
+                self.narrative.append(f"Quest: Help {self.current_npc.name} with an important task.")
             logger.info(f"Player accepted new quest: {self.current_quest.get('description')}")
         else:
             self.current_quest = old_quest
@@ -440,6 +469,19 @@ class Game:
             logger.debug(f"Game update skipped, game state is {self.game_state.name}")
             return
 
+        # Check for any completed NLP generation tasks
+        self.ai_dm.check_nlp_results()
+        
+        # Handle dialogue updates if needed
+        if self.dialogue_was_updated and self.active_dialogue_npc:
+            # If we're not in the middle of displaying a line with typewriter
+            if not self.awaiting_typewriter_completion:
+                logger.info(f"Dialogue was updated for {self.active_dialogue_npc.name}, advancing to show new content")
+                self._advance_dialogue()
+                
+            # Reset the flag
+            self.dialogue_was_updated = False
+        
         self.turn_counter += 1
         
         if self.player.health <= 0:

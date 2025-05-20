@@ -16,6 +16,7 @@ class NPC:
         # New attributes for dialogue management
         self.pending_dialogue_lines = []
         self.current_dialogue_index = 0
+        self.using_template_dialogue = False  # Tracks if we're using placeholder dialogue that might be updated
 
     def take_damage(self, damage, attacker_strength=0):
         # Apply strength modifier to damage

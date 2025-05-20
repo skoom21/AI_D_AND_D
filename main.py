@@ -382,7 +382,11 @@ def typewriter_effect(surface, text, font, color, rect, speed=15, game_instance=
     """
     global typewriter_is_busy
     typewriter_is_busy = True
-
+    
+    # Handle None text
+    if text is None:
+        text = "..."
+    
     draw_panel(surface, rect, border_radius=10)  # Initial panel draw
     padding = int(min(rect.width, rect.height) * 0.05)
     inner_rect = pygame.Rect(
@@ -893,7 +897,9 @@ def display_gameplay():
         # The main loop will call typewriter_effect if game.awaiting_typewriter_completion is true.
         # So, display_gameplay just needs to render the current narrative if typewriter is not active.
         if not typewriter_is_busy:
-            render_text_wrapped(screen, "\n".join(narrative_lines), font_small, WHITE, NARRATIVE_RECT)
+            # Filter out None values and convert all items to strings to prevent errors
+            clean_narrative = [str(line) for line in narrative_lines if line is not None]
+            render_text_wrapped(screen, "\n".join(clean_narrative), font_small, WHITE, NARRATIVE_RECT)
         # Else: typewriter_effect is handling the narrative panel drawing.
 
         # Display the options panel
@@ -951,6 +957,10 @@ def display_gameplay():
     else:
         quest_text = "None"
         quest_color = GREEN
+    
+    # Make sure quest_text is a string
+    if quest_text is None:
+        quest_text = "None"
     
     # Quest panel
     quest_panel_height = int(SCREEN_HEIGHT * 0.06)
@@ -1182,12 +1192,9 @@ def main():
                             elif MENU_OPTIONS[menu_selection] == "Options":
                                 logger.info("Options selected - not implemented yet.")
                                 pass
-                            elif MENU_OPTIONS[menu_selection] == "Quit":
-                                logger.info("Quit selected from menu.")
+                            elif event.key == pygame.K_q:
+                                logger.info("Quick quit from main menu.")
                                 running = False
-                        elif event.key == pygame.K_q:
-                            logger.info("Quick quit from main menu.")
-                            running = False
 
                     elif current_app_screen == AppScreen.INTRO:
                         if event.key == pygame.K_RETURN:

@@ -27,7 +27,7 @@ class AIDM:
             return
 
         # Ensure narrative is initialized
-        if self.game.narrative is None:
+        if not hasattr(self.game, 'narrative') or self.game.narrative is None:
             self.game.narrative = []
 
         # Find a living NPC to be the target of a quest
@@ -41,8 +41,34 @@ class AIDM:
             quest_type = self._select_quest_type(target_npc)
             self.last_quest_type = quest_type
             
-            # Generate quest description using NLP
-            quest_description = self.nlp_generator.generate_quest_description(quest_type, target_npc.name)
+            # Set a loading message in the narrative
+            self.game.narrative = [f"Quest Giver is considering what task to give you..."]
+            
+            # Generate quest description using NLP - start the request
+            self.nlp_generator.generate_quest_description(quest_type, target_npc.name)
+            
+            # WAIT for NLP generation to complete instead of using template immediately
+            # Wait for a reasonable amount of time for generation to complete
+            max_wait_time = 30  # seconds
+            wait_time = 0
+            wait_interval = 0.1  # seconds
+            
+            logger.info(f"Waiting for NLP generator to produce quest description for {target_npc.name}...")
+            
+            import time
+            while self.nlp_generator.is_busy() and wait_time < max_wait_time:
+                time.sleep(wait_interval)
+                wait_time += wait_interval
+            
+            # Check if generation completed successfully
+            quest_description = self.nlp_generator.get_result()
+            
+            # Only use template as fallback if generation failed completely
+            if not quest_description:
+                logger.warning(f"NLP generation for quest description timed out or failed. Using template fallback.")
+                quest_description = f"Quest: Help {target_npc.name} with an important task."
+            else:
+                logger.info(f"Successfully received NLP generated quest description: {quest_description}")
             
             # Create a unique quest ID
             quest_id = str(uuid.uuid4())[:8]
@@ -64,8 +90,22 @@ class AIDM:
             self.game.last_action_led_to_new_quest = True  # Set flag for sound effect
             # Avoid adding duplicate "New Quest" messages
             new_quest_message = f"New Quest: {new_quest['description']}"
-            if len(self.game.narrative) == 0 or new_quest_message not in self.game.narrative[-1]:
-                self.game.narrative.append(new_quest_message)
+            
+            # Completely rewrite the narrative check to avoid accessing narrative[-1] when narrative is None or empty
+            if self.game.narrative is None or len(self.game.narrative) == 0:
+                # Narrative is None or empty, safe to append
+                self.game.narrative = [new_quest_message]
+            else:
+                # Narrative exists and has elements, check if the message is already there
+                last_message = self.game.narrative[-1]
+                # Ensure last_message is not None and is a string before using 'in' operator
+                if last_message is None:
+                    self.game.narrative.append(new_quest_message)
+                elif isinstance(last_message, str) and new_quest_message not in last_message:
+                    self.game.narrative.append(new_quest_message)
+                elif not isinstance(last_message, str):
+                    # If last_message is not a string (e.g., it's a list or other object), just append
+                    self.game.narrative.append(new_quest_message)
         else:
             # No living NPCs left, so no quest can be assigned.
             # The game's update() method should handle transitioning to VICTORY state.
@@ -165,10 +205,36 @@ class AIDM:
             'npc_type': npc.npc_type  # Pass npc_type to nlp_generator context
         }
         
-        # Generate dialogue using NLP
-        dialogue_lines = self.nlp_generator.generate_npc_dialogue(npc.name, disposition, context)
+        # Set a custom message in the game narrative to indicate loading
+        self.game.narrative = [f"Waiting for {npc.name} to speak..."]
+            
+        # Request the NLP generator to generate dialogue
+        self.nlp_generator.generate_npc_dialogue(npc.name, disposition, context)
         
-        logger.info(f"AIDM generated dialogue lines for NPC {npc.name}: {dialogue_lines}")
+        # WAIT for NLP generation to complete instead of immediately returning template
+        # Wait for a reasonable amount of time for generation to complete
+        max_wait_time = 30  # seconds
+        wait_time = 0
+        wait_interval = 0.1  # seconds
+        
+        logger.info(f"Waiting for NLP generator to produce dialogue for {npc.name}...")
+        
+        import time
+        while self.nlp_generator.is_busy() and wait_time < max_wait_time:
+            time.sleep(wait_interval)
+            wait_time += wait_interval
+        
+        # Check if generation completed successfully
+        dialogue_lines = self.nlp_generator.get_result()
+        
+        if not dialogue_lines:
+            # Only use template as fallback if generation failed completely
+            logger.warning(f"NLP generation for {npc.name} dialogue timed out or failed. Using template fallback.")
+            default_dialogue = [f"{npc.name} {'glares at you silently' if disposition == 'hostile' else 'nods in greeting'}."]
+            dialogue_lines = default_dialogue
+        else:
+            logger.info(f"Successfully received NLP generated dialogue for {npc.name}: {dialogue_lines}")
+        
         self.game.is_generating_text = False  # Clear flag after NLP call
         return dialogue_lines  # Return the list of lines
 
@@ -187,13 +253,42 @@ class AIDM:
         
         logger.info(f"AIDM: Completing quest of type {quest_type} for target {target_npc_name}")
         
-        # Generate completion message
-        completion_message = self.nlp_generator.generate_quest_completion(target_npc_name)
+        # Set a loading message in the narrative
+        self.game.narrative = ["Completing quest..."]
+        
+        # Generate completion message - start the request
+        self.nlp_generator.generate_quest_completion(target_npc_name)
+        
+        # WAIT for NLP generation to complete instead of using template immediately
+        # Wait for a reasonable amount of time for generation to complete
+        max_wait_time = 30  # seconds
+        wait_time = 0
+        wait_interval = 0.1  # seconds
+        
+        logger.info(f"Waiting for NLP generator to produce quest completion for {target_npc_name}...")
+        
+        import time
+        while self.nlp_generator.is_busy() and wait_time < max_wait_time:
+            time.sleep(wait_interval)
+            wait_time += wait_interval
+        
+        # Check if generation completed successfully
+        completion_message = self.nlp_generator.get_result()
+        
+        # Only use template as fallback if generation failed completely
+        if not completion_message:
+            logger.warning(f"NLP generation for quest completion timed out or failed. Using template fallback.")
+            completion_message = f"✓ QUEST COMPLETE\nYou've successfully completed the quest for {target_npc_name}.\nReward: +10 XP, +5 Gold\n"
+        else:
+            logger.info(f"Successfully received NLP generated quest completion message: {completion_message}")
         
         # Ensure narrative is initialized before modifying it
-        if self.game.narrative is None:
+        if not hasattr(self.game, 'narrative') or self.game.narrative is None:
             self.game.narrative = []
-        self.game.narrative = [completion_message]  # Reset narrative with completion message
+            
+        # Add completion message to narrative instead of replacing it
+        if completion_message is not None:
+            self.game.narrative.append(completion_message)
         
         # Mark quest as completed in player's quest log
         self.game.player.complete_quest(completed_quest.get('id'))
@@ -209,9 +304,6 @@ class AIDM:
                 logger.info("AIDM: Quest completed and all NPCs are defeated. Victory condition met.")
         elif self.game.game_state == GameState.PLAYING:  # If not victory, try to get a new quest
             logger.info("AIDM: Quest completed, attempting to update for a new quest.")
-            # Ensure narrative exists before calling update_quest
-            if self.game.narrative is None:
-                self.game.narrative = []
             self.update_quest()
         
         self.game.is_generating_text = False  # Clear flag before returning
@@ -299,3 +391,63 @@ class AIDM:
         from .npc import NPC
         return NPC(health=health, name=name, max_health=health, 
                    npc_type=npc_type, disposition=disposition, strength=strength)
+
+    def check_nlp_results(self):
+        """
+        Check if any NLPGenerator tasks have completed, and update the game state accordingly.
+        This should be called periodically as part of the game update loop.
+        """
+        # Don't try to get results if still generating
+        if self.nlp_generator.is_busy():
+            return
+
+        # Check if there's a result available
+        result = self.nlp_generator.get_result()
+        if not result:
+            return
+            
+        # A result is available, figure out what type it is and update the appropriate parts
+        # For now, we just log that a result was received
+        logger.info(f"AIDM received result from NLP generator: {result}")
+        
+        # If it's a quest description and we have a current quest using a placeholder
+        if self.game.current_quest and isinstance(result, str) and "NEW QUEST" in result:
+            # This looks like a quest description, update the current quest
+            if "Quest: Help" in self.game.current_quest['description']:
+                logger.info("AIDM updating quest description with NLP-generated content")
+                # Update the quest description
+                self.game.current_quest['description'] = result
+                
+                # Update the narrative message about the new quest
+                for i, message in enumerate(self.game.narrative):
+                    if message and isinstance(message, str) and message.startswith("New Quest:"):
+                        self.game.narrative[i] = f"New Quest: {result}"
+                        break
+        
+        # If it's dialogue lines (a list of strings) and there's an active dialogue
+        elif isinstance(result, list) and all(isinstance(item, str) for item in result) and self.game.active_dialogue_npc:
+            # This looks like dialogue lines for the active NPC
+            npc = self.game.active_dialogue_npc
+            
+            # Check if the dialogue is using template text
+            if npc.using_template_dialogue:
+                # Template dialogue is being used, replace with generated content
+                logger.info(f"AIDM updating active dialogue with NPC {npc.name} with generated content")
+                
+                # Store current position
+                old_index = npc.current_dialogue_index
+                
+                # Replace pending dialogue lines with generated content
+                npc.pending_dialogue_lines = result
+                
+                # Set flag to true to indicate the dialog was updated
+                self.game.dialogue_was_updated = True
+                
+                # Reset index if we've already shown the template
+                if old_index > 0:
+                    # We've already shown the first template line, start from beginning of new content
+                    npc.current_dialogue_index = 0
+                    logger.info(f"Resetting dialogue index for {npc.name} to show full generated content")
+                
+                # Mark as no longer using template
+                npc.using_template_dialogue = False
